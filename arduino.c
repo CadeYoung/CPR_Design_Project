@@ -61,10 +61,31 @@ Screen currentScreen = HOME_SCREEN;
 
 
 // ==================================================
-// SETTINGS MENU SELECTION
+// MENU VARIABLES
 // ==================================================
 
 int menuIndex = 0;
+
+
+// Brightness submenu cursor
+int brightnessMenuIndex = 0;
+
+
+// Active brightness setting
+// 0 = Automatic
+// 1 = Low
+// 2 = Medium
+// 3 = High
+
+int brightnessSetting = 0;
+
+
+// Photoresistor-determined brightness
+// 0 = Low
+// 1 = Medium
+// 2 = High
+
+int automaticBrightness = 0;
 
 
 // ==================================================
@@ -201,7 +222,7 @@ void loop() {
 
   updateDisplay();
 
-  buzzeroutput();
+  // buzzeroutput();
 }
 
 
@@ -291,7 +312,6 @@ void readencoder() {
   int currentA = digitalRead(encoderA);
 
 
-  // Detect falling edge on channel A
   if (lastA == HIGH && currentA == LOW) {
 
     if (millis() - lastEncoderTime > 5) {
@@ -360,41 +380,100 @@ void readLightLevel() {
 
   int adcValue = analogRead(photoPin);
 
-
   // Convert ADC reading to approximate voltage
+
   float voltage =
     (adcValue / 4095.0) * 3.3;
 
-
-  // Uncomment for testing
-  /*
-  Serial.print("Voltage: ");
-  Serial.print(voltage);
-  Serial.print(" V   ");
-  */
+    Serial.println(voltage);
 
 
-  if (voltage < 1.5) {
+  // ==================================================
+  // DETERMINE AUTOMATIC BRIGHTNESS CATEGORY
+  // ==================================================
 
-    // LOW
+  if (voltage < 0.95) {
 
-    // Serial.println("LOW");
+    automaticBrightness = 2;
   }
 
 
-  else if (voltage < 2.3) {
+  else if (voltage < 1.7) {
 
-    // MEDIUM
-
-    // Serial.println("MEDIUM");
+    automaticBrightness = 1;
   }
 
 
   else {
 
-    // HIGH
+    automaticBrightness = 0;
+  }
 
-    // Serial.println("HIGH");
+
+  // Apply brightness setting
+
+  updateBrightness();
+}
+
+
+// ==================================================
+// UPDATE OLED BRIGHTNESS
+// ==================================================
+
+void updateBrightness() {
+
+  // ==================================================
+  // AUTOMATIC
+  // ==================================================
+
+  if (brightnessSetting == 0) {
+
+    if (automaticBrightness == 0) {
+
+      u8g2.setContrast(1);
+    }
+
+
+    else if (automaticBrightness == 1) {
+
+      u8g2.setContrast(130);
+    }
+
+
+    else {
+
+      u8g2.setContrast(255);
+    }
+  }
+
+
+  // ==================================================
+  // LOW
+  // ==================================================
+
+  else if (brightnessSetting == 1) {
+
+    u8g2.setContrast(1);
+  }
+
+
+  // ==================================================
+  // MEDIUM
+  // ==================================================
+
+  else if (brightnessSetting == 2) {
+
+    u8g2.setContrast(130);
+  }
+
+
+  // ==================================================
+  // HIGH
+  // ==================================================
+
+  else if (brightnessSetting == 3) {
+
+    u8g2.setContrast(255);
   }
 }
 
@@ -443,9 +522,7 @@ void buzzeroutput() {
 void handleMenu() {
 
   // ==================================================
-  // HOME BUTTON
-  //
-  // Home works regardless of current menu
+  // HOME BUTTON OVERRIDES EVERYTHING
   // ==================================================
 
   if (homePressed) {
@@ -467,7 +544,6 @@ void handleMenu() {
 
       case HOME_SCREEN:
 
-        // Encoder button enters settings
         if (encoderPressed) {
 
           currentScreen = SETTINGS_MENU;
@@ -485,16 +561,13 @@ void handleMenu() {
       case SETTINGS_MENU:
 
 
-        // ----------------------------------------------
-        // ROTATE ENCODER
-        // ----------------------------------------------
+        // Move forward one option
 
         if (encoderTurned) {
 
           menuIndex++;
 
 
-          // Wrap around after fourth option
           if (menuIndex > 3) {
 
             menuIndex = 0;
@@ -502,9 +575,7 @@ void handleMenu() {
         }
 
 
-        // ----------------------------------------------
-        // SELECT OPTION
-        // ----------------------------------------------
+        // Select current option
 
         if (encoderPressed) {
 
@@ -529,13 +600,16 @@ void handleMenu() {
           else if (menuIndex == 3) {
 
             currentScreen = SET_BRIGHTNESS_MENU;
+
+            // Start cursor on active brightness setting
+
+            brightnessMenuIndex =
+              brightnessSetting;
           }
         }
 
 
-        // ----------------------------------------------
-        // BACK BUTTON
-        // ----------------------------------------------
+        // Back returns home
 
         if (backPressed) {
 
@@ -593,6 +667,32 @@ void handleMenu() {
 
       case SET_BRIGHTNESS_MENU:
 
+
+        // Move cursor forward
+
+        if (encoderTurned) {
+
+          brightnessMenuIndex++;
+
+
+          if (brightnessMenuIndex > 3) {
+
+            brightnessMenuIndex = 0;
+          }
+        }
+
+
+        // Select current brightness option
+
+        if (encoderPressed) {
+
+          brightnessSetting =
+            brightnessMenuIndex;
+        }
+
+
+        // Back returns to settings
+
         if (backPressed) {
 
           currentScreen = SETTINGS_MENU;
@@ -604,7 +704,7 @@ void handleMenu() {
 
 
   // ==================================================
-  // CLEAR EVENTS
+  // CLEAR INPUT EVENTS
   // ==================================================
 
   encoderTurned = false;
@@ -913,7 +1013,6 @@ void displaySettingsMenu() {
 
   u8g2.clearBuffer();
 
-
   u8g2.setFont(u8g2_font_6x12_tr);
 
 
@@ -953,46 +1052,30 @@ void displaySettingsMenu() {
 
 
   // ==================================================
-  // SELECTION POINTER
+  // CURSOR
   // ==================================================
 
   if (menuIndex == 0) {
 
-    u8g2.drawStr(
-      0,
-      25,
-      ">"
-    );
+    u8g2.drawStr(0, 25, ">");
   }
 
 
   else if (menuIndex == 1) {
 
-    u8g2.drawStr(
-      0,
-      37,
-      ">"
-    );
+    u8g2.drawStr(0, 37, ">");
   }
 
 
   else if (menuIndex == 2) {
 
-    u8g2.drawStr(
-      0,
-      49,
-      ">"
-    );
+    u8g2.drawStr(0, 49, ">");
   }
 
 
   else if (menuIndex == 3) {
 
-    u8g2.drawStr(
-      0,
-      61,
-      ">"
-    );
+    u8g2.drawStr(0, 61, ">");
   }
 
 
@@ -1007,7 +1090,6 @@ void displaySettingsMenu() {
 void displaySetAlarms() {
 
   u8g2.clearBuffer();
-
 
   u8g2.setFont(u8g2_font_6x12_tr);
 
@@ -1026,13 +1108,6 @@ void displaySetAlarms() {
   );
 
 
-  u8g2.drawStr(
-    10,
-    55,
-    "BACK = Settings"
-  );
-
-
   u8g2.sendBuffer();
 }
 
@@ -1044,7 +1119,6 @@ void displaySetAlarms() {
 void displaySetTime() {
 
   u8g2.clearBuffer();
-
 
   u8g2.setFont(u8g2_font_6x12_tr);
 
@@ -1063,25 +1137,17 @@ void displaySetTime() {
   );
 
 
-  u8g2.drawStr(
-    10,
-    55,
-    "BACK = Settings"
-  );
-
-
   u8g2.sendBuffer();
 }
 
 
 // ==================================================
-// STD / MILITARY PLACEHOLDER
+// STANDARD / MILITARY PLACEHOLDER
 // ==================================================
 
 void displaySetStdMilitary() {
 
   u8g2.clearBuffer();
-
 
   u8g2.setFont(u8g2_font_6x12_tr);
 
@@ -1100,48 +1166,150 @@ void displaySetStdMilitary() {
   );
 
 
-  u8g2.drawStr(
-    10,
-    55,
-    "BACK = Settings"
-  );
-
-
   u8g2.sendBuffer();
 }
 
 
 // ==================================================
-// BRIGHTNESS PLACEHOLDER
+// BRIGHTNESS MENU
 // ==================================================
 
 void displaySetBrightness() {
 
   u8g2.clearBuffer();
 
-
   u8g2.setFont(u8g2_font_6x12_tr);
 
 
+  // ==================================================
+  // TITLE
+  // ==================================================
+
   u8g2.drawStr(
     20,
-    15,
-    "SET BRIGHTNESS"
+    11,
+    "OLED BRIGHTNESS"
+  );
+
+
+  // ==================================================
+  // OPTIONS
+  // ==================================================
+
+  u8g2.drawStr(
+    30,
+    25,
+    "AUTOMATIC"
   );
 
 
   u8g2.drawStr(
-    15,
-    35,
-    "Coming later..."
+    30,
+    37,
+    "LOW"
   );
 
 
   u8g2.drawStr(
-    10,
-    55,
-    "BACK = Settings"
+    30,
+    49,
+    "MEDIUM"
   );
+
+
+  u8g2.drawStr(
+    30,
+    61,
+    "HIGH"
+  );
+
+
+  // ==================================================
+  // CURSOR >
+  // ==================================================
+
+  if (brightnessMenuIndex == 0) {
+
+    u8g2.drawStr(
+      0,
+      25,
+      ">"
+    );
+  }
+
+
+  else if (brightnessMenuIndex == 1) {
+
+    u8g2.drawStr(
+      0,
+      37,
+      ">"
+    );
+  }
+
+
+  else if (brightnessMenuIndex == 2) {
+
+    u8g2.drawStr(
+      0,
+      49,
+      ">"
+    );
+  }
+
+
+  else if (brightnessMenuIndex == 3) {
+
+    u8g2.drawStr(
+      0,
+      61,
+      ">"
+    );
+  }
+
+
+  // ==================================================
+  // ACTIVE SETTING +
+  // ==================================================
+
+  if (brightnessSetting == 0) {
+
+    u8g2.drawStr(
+      18,
+      25,
+      "+"
+    );
+  }
+
+
+  else if (brightnessSetting == 1) {
+
+    u8g2.drawStr(
+      18,
+      37,
+      "+"
+    );
+  }
+
+
+  else if (brightnessSetting == 2) {
+
+    u8g2.drawStr(
+      18,
+      49,
+      "+"
+    );
+  }
+
+
+  else if (brightnessSetting == 3) {
+
+    u8g2.drawStr(
+      18,
+      61,
+      "+"
+    );
+  }
 
 
   u8g2.sendBuffer();
