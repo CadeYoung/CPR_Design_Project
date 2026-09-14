@@ -2,191 +2,761 @@
 #include <U8g2lib.h>
 #include <RTClib.h>
 
-// Define Constants
-long encoderDebounce = 10; // 6 ms encoder rotation debounce
+// ==================================================
+// PIN DEFINITIONS
+// ==================================================
+
 const int backButton = 4;
 const int homeButton = 5;
 const int snoozeButton = 6;
 const int resetButton = 7;
+
+const int photoPin = 8;
+
 const int encoderA = 9;
 const int encoderB = 10;
-const int encoderSelect = 11;
+const int encoderSW = 11;
 
-// Define Variables
+const int buzzerPin = 12;
+
+
+// ==================================================
+// RTC
+// ==================================================
+
 RTC_DS3231 rtc;
-int lastA; // used in readencoder function
-long lastEncoderTime = 0; // last rotary encoder rotation timestamp
-DateTime now; // create object
+DateTime now;
 
-// OLED Display Voodoo Magic
+
+// ==================================================
+// OLED
+// ==================================================
+
 U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(
   U8G2_R0,
   U8X8_PIN_NONE
 );
 
-void setup(){
-  Serial.begin(115200); // enable serial comms
-  Wire.begin(13,14); // enable I2C comms
+
+// ==================================================
+// SCREEN STATES
+// ==================================================
+
+enum Screen {
+
+  HOME_SCREEN,
+
+  SETTINGS_MENU,
+
+  SET_ALARMS_MENU,
+
+  SET_TIME_MENU,
+
+  SET_STD_MILITARY_MENU,
+
+  SET_BRIGHTNESS_MENU
+};
+
+Screen currentScreen = HOME_SCREEN;
+
+
+// ==================================================
+// SETTINGS MENU SELECTION
+// ==================================================
+
+int menuIndex = 0;
+
+
+// ==================================================
+// ROTARY ENCODER VARIABLES
+// ==================================================
+
+int lastA = HIGH;
+
+unsigned long lastEncoderTime = 0;
+
+
+// Encoder push button debounce
+
+int lastEncoderButtonReading = HIGH;
+int encoderButtonState = HIGH;
+
+unsigned long encoderButtonDebounceTime = 0;
+
+
+// ==================================================
+// BACK BUTTON VARIABLES
+// ==================================================
+
+int lastBackReading = HIGH;
+int backButtonState = HIGH;
+
+unsigned long backDebounceTime = 0;
+
+
+// ==================================================
+// HOME BUTTON VARIABLES
+// ==================================================
+
+int lastHomeReading = HIGH;
+int homeButtonState = HIGH;
+
+unsigned long homeDebounceTime = 0;
+
+
+// ==================================================
+// INPUT EVENTS
+// ==================================================
+
+bool encoderTurned = false;
+bool encoderPressed = false;
+
+bool backPressed = false;
+bool homePressed = false;
+
+
+// ==================================================
+// BUZZER VARIABLES
+// ==================================================
+
+bool buzzerActive = false;
+bool buzzerFinished = false;
+
+unsigned long buzzerStartTime = 0;
+
+
+// ==================================================
+// SETUP
+// ==================================================
+
+void setup() {
+
+  Serial.begin(115200);
+
+
+  // ==================================================
+  // I2C
+  // ==================================================
+
+  Wire.begin(13, 14);
+
   rtc.begin();
-  rtc.adjust(DateTime(2026, 9, 10, 18, 7, 0));
+
   u8g2.begin();
 
-  // configure buttons
-  pinMode(backButton, INPUT_PULLUP); // GPIO 4
-  pinMode(homeButton, INPUT_PULLUP); // GPIO 5
-  pinMode(snoozeButton, INPUT_PULLUP); // GPIO 6
-  pinMode(resetButton, INPUT_PULLUP); // GPIO 7
-  pinMode(encoderA, INPUT_PULLUP); // GPIO 9
-  pinMode(encoderB, INPUT_PULLUP); // GPIO 10
-  pinMode(encoderSelect, INPUT_PULLUP); // GPIO 11
+
+  // ==================================================
+  // PUSH BUTTONS
+  // ==================================================
+
+  pinMode(backButton, INPUT_PULLUP);     // GPIO 4
+  pinMode(homeButton, INPUT_PULLUP);     // GPIO 5
+  pinMode(snoozeButton, INPUT_PULLUP);   // GPIO 6
+  pinMode(resetButton, INPUT_PULLUP);    // GPIO 7
+
+
+  // ==================================================
+  // PHOTORESISTOR
+  // ==================================================
+
+  pinMode(photoPin, INPUT);              // GPIO 8
+
+  analogReadResolution(12);
+
+
+  // ==================================================
+  // ROTARY ENCODER
+  // ==================================================
+
+  pinMode(encoderA, INPUT_PULLUP);        // GPIO 9
+  pinMode(encoderB, INPUT_PULLUP);        // GPIO 10
+  pinMode(encoderSW, INPUT_PULLUP);       // GPIO 11
+
+  lastA = digitalRead(encoderA);
+
+
+  // ==================================================
+  // BUZZER
+  // ==================================================
+
+  pinMode(buzzerPin, OUTPUT);             // GPIO 12
 }
 
-void loop(){
-  readbuttons(); // continuously poll for push button input
-  //readencoder(); // continuously poll for rotary encoder input
+
+// ==================================================
+// MAIN LOOP
+// ==================================================
+
+void loop() {
+
+  readbuttons();
+
+  readencoder();
+
+  readLightLevel();
+
   readtime();
-  updatemenu();
+
+  handleMenu();
+
+  updateDisplay();
+
+  buzzeroutput();
 }
 
-void readbuttons(){
-  if(digitalRead(backButton) == LOW){ // wait for button press
-      delay(50); // delay 50 ms
 
-  if(digitalRead(backButton) == LOW){ // check to see if still pressed
-      Serial.println("Back button pressed"); // output test message
+// ==================================================
+// READ BACK + HOME BUTTONS
+// ==================================================
 
-      while(digitalRead(backButton) == LOW){ // wait for button release
-        delay(10); // delay 10 ms
-      }
-    } 
+void readbuttons() {
+
+  // ==================================================
+  // BACK BUTTON
+  // ==================================================
+
+  int backReading = digitalRead(backButton);
+
+
+  if (backReading != lastBackReading) {
+
+    backDebounceTime = millis();
   }
 
-  if(digitalRead(homeButton) == LOW){ // wait for button press
-      delay(50); // delay 50 ms
 
-  if(digitalRead(homeButton) == LOW){ // check to see if still pressed
-      Serial.println("Home button pressed"); // output test message
+  if (millis() - backDebounceTime >= 50) {
 
-      while(digitalRead(homeButton) == LOW){ // wait for button release
-        delay(10); // delay 10 ms
-      }
-    } 
-  }
+    if (backReading != backButtonState) {
 
-  if(digitalRead(snoozeButton) == LOW){ // wait for button press
-      delay(50); // delay 50 ms
+      backButtonState = backReading;
 
-  if(digitalRead(snoozeButton) == LOW){ // check to see if still pressed
-      Serial.println("Snooze button pressed"); // output test message
 
-      while(digitalRead(snoozeButton) == LOW){ // wait for button release
-        delay(10); // delay 10 ms
-      }
-    } 
-  }
+      if (backButtonState == LOW) {
 
-  if(digitalRead(resetButton) == LOW){ // wait for button press
-      delay(50); // delay 50 ms
+        backPressed = true;
 
-  if(digitalRead(resetButton) == LOW){ // check to see if still pressed
-      Serial.println("Reset button pressed"); // output test message
-
-      while(digitalRead(resetButton) == LOW){ // wait for button release
-        delay(10); // delay 10 ms
-      }
-    } 
-  }
-}
-
-void readencoder(){
-  int currentA = digitalRead(encoderA); // read current channel A state
-  
-  if(currentA != lastA){ // detect rotation
-    if((millis() - lastEncoderTime) >= encoderDebounce){ // proceed only if 6 ms have passed
-      lastEncoderTime = millis(); // set last encoder time
-
-      if(digitalRead(encoderB) != currentA){ // determine phase shift
-        Serial.println("Dial forward (CW)");
-      } else { // determine phase shift
-        Serial.println("Dial backward (CCW)");
-      }
-    }
-    lastA = currentA; // update last channel A state   
-
-    if(digitalRead(encoderSelect) == LOW){ // wait for button press
-        delay(50); // delay 50 ms
-
-    if(digitalRead(encoderSelect) == LOW){ // check to see if still pressed
-        Serial.println("Select button pressed"); // output test message
-
-        while(digitalRead(encoderSelect) == LOW){ // wait for button release
-          delay(10); // delay 10 ms
-        }
+        Serial.println("BACK");
       }
     }
   }
+
+
+  lastBackReading = backReading;
+
+
+  // ==================================================
+  // HOME BUTTON
+  // ==================================================
+
+  int homeReading = digitalRead(homeButton);
+
+
+  if (homeReading != lastHomeReading) {
+
+    homeDebounceTime = millis();
+  }
+
+
+  if (millis() - homeDebounceTime >= 50) {
+
+    if (homeReading != homeButtonState) {
+
+      homeButtonState = homeReading;
+
+
+      if (homeButtonState == LOW) {
+
+        homePressed = true;
+
+        Serial.println("HOME");
+      }
+    }
+  }
+
+
+  lastHomeReading = homeReading;
 }
 
-void readtime(){
+
+// ==================================================
+// READ ROTARY ENCODER
+// ==================================================
+
+void readencoder() {
+
+  // ==================================================
+  // ROTATION
+  // ==================================================
+
+  int currentA = digitalRead(encoderA);
+
+
+  // Detect falling edge on channel A
+  if (lastA == HIGH && currentA == LOW) {
+
+    if (millis() - lastEncoderTime > 5) {
+
+      encoderTurned = true;
+
+      Serial.println("DIAL TURNED");
+
+      lastEncoderTime = millis();
+    }
+  }
+
+
+  lastA = currentA;
+
+
+  // ==================================================
+  // ENCODER PUSH BUTTON
+  // ==================================================
+
+  int buttonReading = digitalRead(encoderSW);
+
+
+  if (buttonReading != lastEncoderButtonReading) {
+
+    encoderButtonDebounceTime = millis();
+  }
+
+
+  if (millis() - encoderButtonDebounceTime >= 50) {
+
+    if (buttonReading != encoderButtonState) {
+
+      encoderButtonState = buttonReading;
+
+
+      if (encoderButtonState == LOW) {
+
+        encoderPressed = true;
+
+        Serial.println("ENCODER PRESSED");
+      }
+    }
+  }
+
+
+  lastEncoderButtonReading = buttonReading;
+}
+
+
+// ==================================================
+// READ RTC
+// ==================================================
+
+void readtime() {
+
   now = rtc.now();
-  Serial.print("Time: ");
-  Serial.print(now.hour());
-  Serial.print(":");
-  Serial.print(now.minute());
-  Serial.print(":");
-  Serial.println(now.second());
 }
 
-void updatemenu() {
+
+// ==================================================
+// PHOTORESISTOR
+// ==================================================
+
+void readLightLevel() {
+
+  int adcValue = analogRead(photoPin);
+
+
+  // Convert ADC reading to approximate voltage
+  float voltage =
+    (adcValue / 4095.0) * 3.3;
+
+
+  // Uncomment for testing
+  /*
+  Serial.print("Voltage: ");
+  Serial.print(voltage);
+  Serial.print(" V   ");
+  */
+
+
+  if (voltage < 1.5) {
+
+    // LOW
+
+    // Serial.println("LOW");
+  }
+
+
+  else if (voltage < 2.3) {
+
+    // MEDIUM
+
+    // Serial.println("MEDIUM");
+  }
+
+
+  else {
+
+    // HIGH
+
+    // Serial.println("HIGH");
+  }
+}
+
+
+// ==================================================
+// BUZZER
+// ==================================================
+
+void buzzeroutput() {
+
+  // ==================================================
+  // START BUZZER ONCE
+  // ==================================================
+
+  if (buzzerActive == false &&
+      buzzerFinished == false) {
+
+    tone(buzzerPin, 2000);
+
+    buzzerStartTime = millis();
+
+    buzzerActive = true;
+  }
+
+
+  // ==================================================
+  // STOP AFTER 1 SECOND
+  // ==================================================
+
+  if (buzzerActive == true &&
+      millis() - buzzerStartTime >= 1000) {
+
+    noTone(buzzerPin);
+
+    buzzerActive = false;
+
+    buzzerFinished = true;
+  }
+}
+
+
+// ==================================================
+// HANDLE MENU NAVIGATION
+// ==================================================
+
+void handleMenu() {
+
+  // ==================================================
+  // HOME BUTTON
+  //
+  // Home works regardless of current menu
+  // ==================================================
+
+  if (homePressed) {
+
+    currentScreen = HOME_SCREEN;
+
+    menuIndex = 0;
+  }
+
+
+  else {
+
+    switch (currentScreen) {
+
+
+      // ==================================================
+      // HOME SCREEN
+      // ==================================================
+
+      case HOME_SCREEN:
+
+        // Encoder button enters settings
+        if (encoderPressed) {
+
+          currentScreen = SETTINGS_MENU;
+
+          menuIndex = 0;
+        }
+
+        break;
+
+
+      // ==================================================
+      // SETTINGS MENU
+      // ==================================================
+
+      case SETTINGS_MENU:
+
+
+        // ----------------------------------------------
+        // ROTATE ENCODER
+        // ----------------------------------------------
+
+        if (encoderTurned) {
+
+          menuIndex++;
+
+
+          // Wrap around after fourth option
+          if (menuIndex > 3) {
+
+            menuIndex = 0;
+          }
+        }
+
+
+        // ----------------------------------------------
+        // SELECT OPTION
+        // ----------------------------------------------
+
+        if (encoderPressed) {
+
+          if (menuIndex == 0) {
+
+            currentScreen = SET_ALARMS_MENU;
+          }
+
+
+          else if (menuIndex == 1) {
+
+            currentScreen = SET_TIME_MENU;
+          }
+
+
+          else if (menuIndex == 2) {
+
+            currentScreen = SET_STD_MILITARY_MENU;
+          }
+
+
+          else if (menuIndex == 3) {
+
+            currentScreen = SET_BRIGHTNESS_MENU;
+          }
+        }
+
+
+        // ----------------------------------------------
+        // BACK BUTTON
+        // ----------------------------------------------
+
+        if (backPressed) {
+
+          currentScreen = HOME_SCREEN;
+        }
+
+        break;
+
+
+      // ==================================================
+      // SET ALARMS
+      // ==================================================
+
+      case SET_ALARMS_MENU:
+
+        if (backPressed) {
+
+          currentScreen = SETTINGS_MENU;
+        }
+
+        break;
+
+
+      // ==================================================
+      // SET TIME
+      // ==================================================
+
+      case SET_TIME_MENU:
+
+        if (backPressed) {
+
+          currentScreen = SETTINGS_MENU;
+        }
+
+        break;
+
+
+      // ==================================================
+      // SET STANDARD / MILITARY
+      // ==================================================
+
+      case SET_STD_MILITARY_MENU:
+
+        if (backPressed) {
+
+          currentScreen = SETTINGS_MENU;
+        }
+
+        break;
+
+
+      // ==================================================
+      // SET BRIGHTNESS
+      // ==================================================
+
+      case SET_BRIGHTNESS_MENU:
+
+        if (backPressed) {
+
+          currentScreen = SETTINGS_MENU;
+        }
+
+        break;
+    }
+  }
+
+
+  // ==================================================
+  // CLEAR EVENTS
+  // ==================================================
+
+  encoderTurned = false;
+
+  encoderPressed = false;
+
+  backPressed = false;
+
+  homePressed = false;
+}
+
+
+// ==================================================
+// UPDATE OLED DISPLAY
+// ==================================================
+
+void updateDisplay() {
+
+  switch (currentScreen) {
+
+
+    case HOME_SCREEN:
+
+      displayHome();
+
+      break;
+
+
+    case SETTINGS_MENU:
+
+      displaySettingsMenu();
+
+      break;
+
+
+    case SET_ALARMS_MENU:
+
+      displaySetAlarms();
+
+      break;
+
+
+    case SET_TIME_MENU:
+
+      displaySetTime();
+
+      break;
+
+
+    case SET_STD_MILITARY_MENU:
+
+      displaySetStdMilitary();
+
+      break;
+
+
+    case SET_BRIGHTNESS_MENU:
+
+      displaySetBrightness();
+
+      break;
+  }
+}
+
+
+// ==================================================
+// HOME DISPLAY
+// ==================================================
+
+void displayHome() {
 
   u8g2.clearBuffer();
+
 
   // ==================================================
   // BUILD TIME STRING HH:MM:SS
   // ==================================================
 
-  String hour   = String(now.hour());
+  String hour = String(now.hour());
+
   String minute = String(now.minute());
+
   String second = String(now.second());
 
-  if (now.hour() < 10)
+
+  if (now.hour() < 10) {
+
     hour = "0" + hour;
+  }
 
-  if (now.minute() < 10)
+
+  if (now.minute() < 10) {
+
     minute = "0" + minute;
+  }
 
-  if (now.second() < 10)
+
+  if (now.second() < 10) {
+
     second = "0" + second;
+  }
 
-  String timeString = hour + ":" + minute + ":" + second;
+
+  String timeString =
+    hour + ":" + minute + ":" + second;
+
 
   // ==================================================
   // BUILD DAY STRING
   // ==================================================
 
   const char* days[] = {
-    "SUN", "MON", "TUE", "WED",
-    "THU", "FRI", "SAT"
+
+    "SUN",
+    "MON",
+    "TUE",
+    "WED",
+    "THU",
+    "FRI",
+    "SAT"
   };
 
-  String dayString = days[now.dayOfTheWeek()];
+
+  String dayString =
+    days[now.dayOfTheWeek()];
 
 
   // ==================================================
-  // BUILD DATE STRING MM/DD/YYYY
+  // BUILD DATE STRING
   // ==================================================
 
   String month = String(now.month());
-  String day   = String(now.day());
-  String year  = String(now.year());
 
-  if (now.month() < 10)
+  String day = String(now.day());
+
+  String year = String(now.year());
+
+
+  if (now.month() < 10) {
+
     month = "0" + month;
+  }
 
-  if (now.day() < 10)
+
+  if (now.day() < 10) {
+
     day = "0" + day;
+  }
 
-  String dateString = month + "/" + day + "/" + year;
+
+  String dateString =
+    month + "/" + day + "/" + year;
 
 
   // ==================================================
@@ -195,57 +765,384 @@ void updatemenu() {
 
   u8g2.setFont(u8g2_font_logisoso20_tn);
 
-  int timeWidth = u8g2.getStrWidth(timeString.c_str());
-  int timeX = (128 - timeWidth) / 2;
 
-  u8g2.drawStr(timeX, 34, timeString.c_str());
+  int timeWidth =
+    u8g2.getStrWidth(timeString.c_str());
+
+
+  int timeX =
+    (128 - timeWidth) / 2;
+
+
+  u8g2.drawStr(
+    timeX,
+    34,
+    timeString.c_str()
+  );
+
 
   // ==================================================
-  // FLASHING GEAR ICON
+  // FLASHING GEAR
   // ==================================================
 
-  bool showGear = ((millis() / 500) % 2 == 0);
+  bool showGear =
+    ((millis() / 500) % 2 == 0);
+
 
   if (showGear) {
 
     int gearX = 8;
+
     int gearY = 54;
 
-    // Outer circle
-    u8g2.drawCircle(gearX, gearY, 5);
 
-    // Center hole
-    u8g2.drawCircle(gearX, gearY, 2);
+    u8g2.drawCircle(
+      gearX,
+      gearY,
+      5
+    );
 
-    // Small gear teeth
-    u8g2.drawLine(gearX, gearY - 7, gearX, gearY - 5);
-    u8g2.drawLine(gearX, gearY + 5, gearX, gearY + 7);
 
-    u8g2.drawLine(gearX - 7, gearY, gearX - 5, gearY);
-    u8g2.drawLine(gearX + 5, gearY, gearX + 7, gearY);
+    u8g2.drawCircle(
+      gearX,
+      gearY,
+      2
+    );
 
-    u8g2.drawLine(gearX - 5, gearY - 5, gearX - 4, gearY - 4);
-    u8g2.drawLine(gearX + 4, gearY - 4, gearX + 5, gearY - 5);
 
-    u8g2.drawLine(gearX - 5, gearY + 5, gearX - 4, gearY + 4);
-    u8g2.drawLine(gearX + 4, gearY + 4, gearX + 5, gearY + 5);
+    u8g2.drawLine(
+      gearX,
+      gearY - 7,
+      gearX,
+      gearY - 5
+    );
+
+
+    u8g2.drawLine(
+      gearX,
+      gearY + 5,
+      gearX,
+      gearY + 7
+    );
+
+
+    u8g2.drawLine(
+      gearX - 7,
+      gearY,
+      gearX - 5,
+      gearY
+    );
+
+
+    u8g2.drawLine(
+      gearX + 5,
+      gearY,
+      gearX + 7,
+      gearY
+    );
+
+
+    u8g2.drawLine(
+      gearX - 5,
+      gearY - 5,
+      gearX - 4,
+      gearY - 4
+    );
+
+
+    u8g2.drawLine(
+      gearX + 4,
+      gearY - 4,
+      gearX + 5,
+      gearY - 5
+    );
+
+
+    u8g2.drawLine(
+      gearX - 5,
+      gearY + 5,
+      gearX - 4,
+      gearY + 4
+    );
+
+
+    u8g2.drawLine(
+      gearX + 4,
+      gearY + 4,
+      gearX + 5,
+      gearY + 5
+    );
   }
-  
-    u8g2.setFont(u8g2_font_6x12_tr);
-
-    String bottomString = dayString + "  " + dateString;
-
-    int bottomWidth = u8g2.getStrWidth(bottomString.c_str());
-
-    // Keep text to right of gear
-    int bottomX = 128 - bottomWidth;
-
-    u8g2.drawStr(bottomX, 59, bottomString.c_str());
 
 
   // ==================================================
-  // SEND TO DISPLAY
+  // DAY + DATE
   // ==================================================
+
+  u8g2.setFont(u8g2_font_6x12_tr);
+
+
+  String bottomString =
+    dayString + "  " + dateString;
+
+
+  int bottomWidth =
+    u8g2.getStrWidth(bottomString.c_str());
+
+
+  int bottomX =
+    128 - bottomWidth;
+
+
+  u8g2.drawStr(
+    bottomX,
+    59,
+    bottomString.c_str()
+  );
+
+
+  u8g2.sendBuffer();
+}
+
+
+// ==================================================
+// SETTINGS MENU
+// ==================================================
+
+void displaySettingsMenu() {
+
+  u8g2.clearBuffer();
+
+
+  u8g2.setFont(u8g2_font_6x12_tr);
+
+
+  u8g2.drawStr(
+    37,
+    11,
+    "SETTINGS"
+  );
+
+
+  u8g2.drawStr(
+    12,
+    25,
+    "SET ALARMS"
+  );
+
+
+  u8g2.drawStr(
+    12,
+    37,
+    "SET TIME"
+  );
+
+
+  u8g2.drawStr(
+    12,
+    49,
+    "SET STD/MILITARY"
+  );
+
+
+  u8g2.drawStr(
+    12,
+    61,
+    "SET BRIGHTNESS"
+  );
+
+
+  // ==================================================
+  // SELECTION POINTER
+  // ==================================================
+
+  if (menuIndex == 0) {
+
+    u8g2.drawStr(
+      0,
+      25,
+      ">"
+    );
+  }
+
+
+  else if (menuIndex == 1) {
+
+    u8g2.drawStr(
+      0,
+      37,
+      ">"
+    );
+  }
+
+
+  else if (menuIndex == 2) {
+
+    u8g2.drawStr(
+      0,
+      49,
+      ">"
+    );
+  }
+
+
+  else if (menuIndex == 3) {
+
+    u8g2.drawStr(
+      0,
+      61,
+      ">"
+    );
+  }
+
+
+  u8g2.sendBuffer();
+}
+
+
+// ==================================================
+// SET ALARMS PLACEHOLDER
+// ==================================================
+
+void displaySetAlarms() {
+
+  u8g2.clearBuffer();
+
+
+  u8g2.setFont(u8g2_font_6x12_tr);
+
+
+  u8g2.drawStr(
+    30,
+    15,
+    "SET ALARMS"
+  );
+
+
+  u8g2.drawStr(
+    15,
+    35,
+    "Coming later..."
+  );
+
+
+  u8g2.drawStr(
+    10,
+    55,
+    "BACK = Settings"
+  );
+
+
+  u8g2.sendBuffer();
+}
+
+
+// ==================================================
+// SET TIME PLACEHOLDER
+// ==================================================
+
+void displaySetTime() {
+
+  u8g2.clearBuffer();
+
+
+  u8g2.setFont(u8g2_font_6x12_tr);
+
+
+  u8g2.drawStr(
+    40,
+    15,
+    "SET TIME"
+  );
+
+
+  u8g2.drawStr(
+    15,
+    35,
+    "Coming later..."
+  );
+
+
+  u8g2.drawStr(
+    10,
+    55,
+    "BACK = Settings"
+  );
+
+
+  u8g2.sendBuffer();
+}
+
+
+// ==================================================
+// STD / MILITARY PLACEHOLDER
+// ==================================================
+
+void displaySetStdMilitary() {
+
+  u8g2.clearBuffer();
+
+
+  u8g2.setFont(u8g2_font_6x12_tr);
+
+
+  u8g2.drawStr(
+    10,
+    15,
+    "SET STD/MILITARY"
+  );
+
+
+  u8g2.drawStr(
+    15,
+    35,
+    "Coming later..."
+  );
+
+
+  u8g2.drawStr(
+    10,
+    55,
+    "BACK = Settings"
+  );
+
+
+  u8g2.sendBuffer();
+}
+
+
+// ==================================================
+// BRIGHTNESS PLACEHOLDER
+// ==================================================
+
+void displaySetBrightness() {
+
+  u8g2.clearBuffer();
+
+
+  u8g2.setFont(u8g2_font_6x12_tr);
+
+
+  u8g2.drawStr(
+    20,
+    15,
+    "SET BRIGHTNESS"
+  );
+
+
+  u8g2.drawStr(
+    15,
+    35,
+    "Coming later..."
+  );
+
+
+  u8g2.drawStr(
+    10,
+    55,
+    "BACK = Settings"
+  );
+
 
   u8g2.sendBuffer();
 }
