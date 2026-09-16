@@ -50,6 +50,24 @@ enum Screen {
 
   SET_ALARMS_MENU,
 
+  ALARM_OPTIONS_MENU,
+
+  EDIT_ALARM_MENU,
+
+  SET_ALARM_TIME_MENU,
+
+  ALARM_SETTINGS_MENU,
+
+  ALARM_SOUND_MENU,
+
+  SNOOZE_SETTINGS_MENU,
+
+  SNOOZE_LENGTH_MENU,
+
+  SNOOZE_COUNT_MENU,
+
+  ALARM_LENGTH_MENU,
+
   SET_TIME_MENU,
 
   SET_STD_MILITARY_MENU,
@@ -103,6 +121,50 @@ int timeFormat = 0;
 // rotary encoder changes this value, but it does NOT change the active format
 // until the encoder button is clicked.
 int timeFormatMenuIndex = 0;
+
+
+// ==================================================
+// ALARM SETTINGS
+// ==================================================
+
+// Every alarm keeps its own settings.  The hour is stored in 24-hour time
+// (0-23), even when the Home screen is set to Standard time.
+struct Alarm {
+  bool enabled;
+  int hour;
+  int minute;
+  int sound;          // 0 = Sound 1, 1 = Sound 2, 2 = Sound 3
+  int snoozeMinutes;  // 5 through 15 minutes
+  int snoozeCount;    // 1 through 10 snoozes
+  int lengthOption;   // 0 = 15m, 1 = 30m, 2 = 60m, 3 = Indefinite
+};
+
+
+// Three independent alarms, as required by the design report.
+Alarm alarms[3] = {
+  {false, 7, 0, 0, 5, 3, 1},
+  {false, 8, 0, 0, 5, 3, 1},
+  {false, 9, 0, 0, 5, 3, 1}
+};
+
+
+// These variables remember the user's location in the alarm menu tree.
+int alarmListIndex = 0;
+int selectedAlarmIndex = 0;
+int alarmOptionsIndex = 0;
+int editAlarmIndex = 0;
+int alarmSettingsIndex = 0;
+int alarmSoundIndex = 0;
+int snoozeSettingsIndex = 0;
+int snoozeLengthIndex = 0;
+int snoozeCountIndex = 0;
+int alarmLengthIndex = 0;
+
+
+// Time is edited in two steps: hour first, then minute.
+int alarmTimeField = 0;
+int editingAlarmHour = 0;
+int editingAlarmMinute = 0;
 
 
 // ==================================================
@@ -646,9 +708,334 @@ void handleMenu() {
 
       case SET_ALARMS_MENU:
 
+        // Choose one of the three alarms to view or edit.
+        if (encoderTurned) {
+
+          alarmListIndex = (alarmListIndex + 1) % 3;
+        }
+
+
+        if (encoderPressed) {
+
+          selectedAlarmIndex = alarmListIndex;
+          alarmOptionsIndex = 0;
+          currentScreen = ALARM_OPTIONS_MENU;
+        }
+
+
         if (backPressed) {
 
           currentScreen = SETTINGS_MENU;
+        }
+
+        break;
+
+
+      // ==================================================
+      // SELECTED ALARM: ON/OFF OR EDIT
+      // ==================================================
+
+      case ALARM_OPTIONS_MENU:
+
+        if (encoderTurned) {
+
+          alarmOptionsIndex = (alarmOptionsIndex + 1) % 2;
+        }
+
+
+        if (encoderPressed) {
+
+          if (alarmOptionsIndex == 0) {
+
+            alarms[selectedAlarmIndex].enabled =
+              !alarms[selectedAlarmIndex].enabled;
+          }
+
+
+          else {
+
+            editAlarmIndex = 0;
+            currentScreen = EDIT_ALARM_MENU;
+          }
+        }
+
+
+        if (backPressed) {
+
+          currentScreen = SET_ALARMS_MENU;
+        }
+
+        break;
+
+
+      // ==================================================
+      // EDIT ALARM: TIME OR SETTINGS
+      // ==================================================
+
+      case EDIT_ALARM_MENU:
+
+        if (encoderTurned) {
+
+          editAlarmIndex = (editAlarmIndex + 1) % 2;
+        }
+
+
+        if (encoderPressed) {
+
+          if (editAlarmIndex == 0) {
+
+            // Copy the saved time so Back can cancel an unfinished edit.
+            editingAlarmHour = alarms[selectedAlarmIndex].hour;
+            editingAlarmMinute = alarms[selectedAlarmIndex].minute;
+            alarmTimeField = 0;
+            currentScreen = SET_ALARM_TIME_MENU;
+          }
+
+
+          else {
+
+            alarmSettingsIndex = 0;
+            currentScreen = ALARM_SETTINGS_MENU;
+          }
+        }
+
+
+        if (backPressed) {
+
+          currentScreen = ALARM_OPTIONS_MENU;
+        }
+
+        break;
+
+
+      // ==================================================
+      // SET ALARM TIME
+      // ==================================================
+
+      case SET_ALARM_TIME_MENU:
+
+        // The dial changes the highlighted part of HH:MM.
+        if (encoderTurned) {
+
+          if (alarmTimeField == 0) {
+
+            editingAlarmHour = (editingAlarmHour + 1) % 24;
+          }
+
+
+          else {
+
+            editingAlarmMinute = (editingAlarmMinute + 1) % 60;
+          }
+        }
+
+
+        // First press moves from hour to minute. Second press saves both.
+        if (encoderPressed) {
+
+          if (alarmTimeField == 0) {
+
+            alarmTimeField = 1;
+          }
+
+
+          else {
+
+            alarms[selectedAlarmIndex].hour = editingAlarmHour;
+            alarms[selectedAlarmIndex].minute = editingAlarmMinute;
+            currentScreen = EDIT_ALARM_MENU;
+          }
+        }
+
+
+        if (backPressed) {
+
+          currentScreen = EDIT_ALARM_MENU;
+        }
+
+        break;
+
+
+      // ==================================================
+      // ALARM SETTINGS: SOUND, SNOOZE, OR LENGTH
+      // ==================================================
+
+      case ALARM_SETTINGS_MENU:
+
+        if (encoderTurned) {
+
+          alarmSettingsIndex = (alarmSettingsIndex + 1) % 3;
+        }
+
+
+        if (encoderPressed) {
+
+          if (alarmSettingsIndex == 0) {
+
+            alarmSoundIndex = alarms[selectedAlarmIndex].sound;
+            currentScreen = ALARM_SOUND_MENU;
+          }
+
+
+          else if (alarmSettingsIndex == 1) {
+
+            snoozeSettingsIndex = 0;
+            currentScreen = SNOOZE_SETTINGS_MENU;
+          }
+
+
+          else {
+
+            alarmLengthIndex = alarms[selectedAlarmIndex].lengthOption;
+            currentScreen = ALARM_LENGTH_MENU;
+          }
+        }
+
+
+        if (backPressed) {
+
+          currentScreen = EDIT_ALARM_MENU;
+        }
+
+        break;
+
+
+      // ==================================================
+      // ALARM SOUND
+      // ==================================================
+
+      case ALARM_SOUND_MENU:
+
+        if (encoderTurned) {
+
+          alarmSoundIndex = (alarmSoundIndex + 1) % 3;
+        }
+
+
+        if (encoderPressed) {
+
+          alarms[selectedAlarmIndex].sound = alarmSoundIndex;
+        }
+
+
+        if (backPressed) {
+
+          currentScreen = ALARM_SETTINGS_MENU;
+        }
+
+        break;
+
+
+      // ==================================================
+      // SNOOZE SETTINGS: LENGTH OR COUNT
+      // ==================================================
+
+      case SNOOZE_SETTINGS_MENU:
+
+        if (encoderTurned) {
+
+          snoozeSettingsIndex = (snoozeSettingsIndex + 1) % 2;
+        }
+
+
+        if (encoderPressed) {
+
+          if (snoozeSettingsIndex == 0) {
+
+            snoozeLengthIndex = alarms[selectedAlarmIndex].snoozeMinutes - 5;
+            currentScreen = SNOOZE_LENGTH_MENU;
+          }
+
+
+          else {
+
+            snoozeCountIndex = alarms[selectedAlarmIndex].snoozeCount - 1;
+            currentScreen = SNOOZE_COUNT_MENU;
+          }
+        }
+
+
+        if (backPressed) {
+
+          currentScreen = ALARM_SETTINGS_MENU;
+        }
+
+        break;
+
+
+      // ==================================================
+      // SNOOZE LENGTH: 5 THROUGH 15 MINUTES
+      // ==================================================
+
+      case SNOOZE_LENGTH_MENU:
+
+        if (encoderTurned) {
+
+          snoozeLengthIndex = (snoozeLengthIndex + 1) % 11;
+        }
+
+
+        if (encoderPressed) {
+
+          alarms[selectedAlarmIndex].snoozeMinutes = snoozeLengthIndex + 5;
+        }
+
+
+        if (backPressed) {
+
+          currentScreen = SNOOZE_SETTINGS_MENU;
+        }
+
+        break;
+
+
+      // ==================================================
+      // SNOOZE COUNT: 1 THROUGH 10 TIMES
+      // ==================================================
+
+      case SNOOZE_COUNT_MENU:
+
+        if (encoderTurned) {
+
+          snoozeCountIndex = (snoozeCountIndex + 1) % 10;
+        }
+
+
+        if (encoderPressed) {
+
+          alarms[selectedAlarmIndex].snoozeCount = snoozeCountIndex + 1;
+        }
+
+
+        if (backPressed) {
+
+          currentScreen = SNOOZE_SETTINGS_MENU;
+        }
+
+        break;
+
+
+      // ==================================================
+      // ALARM LENGTH: 15, 30, 60 MINUTES, OR INDEFINITE
+      // ==================================================
+
+      case ALARM_LENGTH_MENU:
+
+        if (encoderTurned) {
+
+          alarmLengthIndex = (alarmLengthIndex + 1) % 4;
+        }
+
+
+        if (encoderPressed) {
+
+          alarms[selectedAlarmIndex].lengthOption = alarmLengthIndex;
+        }
+
+
+        if (backPressed) {
+
+          currentScreen = ALARM_SETTINGS_MENU;
         }
 
         break;
@@ -757,6 +1144,48 @@ void handleMenu() {
   homePressed = false;
 }
 
+//Function to call the time on the corner of the screen when working in the settings menus 
+void drawSmallCurrentTime(){
+  int displayHour = now.hour();
+  const char* suffix = "";
+  
+  if (timeFormat == 0){  //conversion to standard mode
+    suffix = (now.hour() < 12) ? "AM" : "PM";
+    displayHour = now.hour() %12;
+
+    if (displayHour == 0) {
+      displayHour = 12 ;
+    }
+  }
+   String hour = String(displayHour);
+    String minute = String(now.minute());
+    String second = String(now.second());
+
+    // Military time keeps a leading zero, such as 08:05:09.
+    if (timeFormat == 1 && displayHour < 10) {
+      hour = "0" + hour;
+    }
+
+    if (now.minute() < 10) { minute = "0" + minute;}
+
+    if (now.second() < 10) { second = "0" + second; }
+
+    String smallTime = hour + ":" + minute + ":" + second;
+
+    if (timeFormat == 0) {smallTime = smallTime + " " + suffix;}
+
+    u8g2.setFont(u8g2_font_6x12_tr);
+
+    int x = 128 - u8g2.getStrWidth(smallTime.c_str());
+
+    // X is calculated so the right edge aligns with the 128-pixel OLED edge.
+    // Y = 63 places the text at the bottom our screen
+    u8g2.drawStr(x, 63, smallTime.c_str());
+  }
+
+
+
+
 
 // ==================================================
 // UPDATE OLED DISPLAY
@@ -784,6 +1213,69 @@ void updateDisplay() {
     case SET_ALARMS_MENU:
 
       displaySetAlarms();
+
+      break;
+
+
+    case ALARM_OPTIONS_MENU:
+
+      displayAlarmOptions();
+
+      break;
+
+
+    case EDIT_ALARM_MENU:
+
+      displayEditAlarm();
+
+      break;
+
+
+    case SET_ALARM_TIME_MENU:
+
+      displaySetAlarmTime();
+
+      break;
+
+
+    case ALARM_SETTINGS_MENU:
+
+      displayAlarmSettings();
+
+      break;
+
+
+    case ALARM_SOUND_MENU:
+
+      displayAlarmSound();
+
+      break;
+
+
+    case SNOOZE_SETTINGS_MENU:
+
+      displaySnoozeSettings();
+
+      break;
+
+
+    case SNOOZE_LENGTH_MENU:
+
+      displaySnoozeLength();
+
+      break;
+
+
+    case SNOOZE_COUNT_MENU:
+
+      displaySnoozeCount();
+
+      break;
+
+
+    case ALARM_LENGTH_MENU:
+
+      displayAlarmLength();
 
       break;
 
@@ -1169,30 +1661,284 @@ void displaySettingsMenu() {
 
 
 // ==================================================
-// SET ALARMS PLACEHOLDER
+// ALARM MENU DISPLAY HELPERS
+// ==================================================
+
+// Convert an alarm's stored 24-hour time into a short string for the menu.
+String alarmTimeString(const Alarm& alarm) {
+
+  String hour = String(alarm.hour);
+  String minute = String(alarm.minute);
+
+  if (alarm.hour < 10) {
+
+    hour = "0" + hour;
+  }
+
+
+  if (alarm.minute < 10) {
+
+    minute = "0" + minute;
+  }
+
+
+  return hour + ":" + minute;
+}
+
+
+// Draw the familiar > cursor at one row in a vertical list.
+void drawMenuCursor(int index, int firstRowY, int rowSpacing) {
+
+  u8g2.drawStr(0, firstRowY + (index * rowSpacing), ">");
+}
+
+
+// ==================================================
+// ALARM LIST: ALARM 1, 2, OR 3
 // ==================================================
 
 void displaySetAlarms() {
 
   u8g2.clearBuffer();
-
   u8g2.setFont(u8g2_font_6x12_tr);
 
+  u8g2.drawStr(34, 11, "SET ALARMS");
 
-  u8g2.drawStr(
-    30,
-    15,
-    "SET ALARMS"
-  );
+  for (int i = 0; i < 3; i++) {
+
+    String alarmLabel = String("ALARM ") + String(i + 1) + "  " +
+      alarmTimeString(alarms[i]) + "  " +
+      (alarms[i].enabled ? "ON" : "OFF");
+
+    u8g2.drawStr(12, 27 + (i * 16), alarmLabel.c_str());
+  }
+
+  drawMenuCursor(alarmListIndex, 27, 16);
+  u8g2.sendBuffer();
+}
 
 
-  u8g2.drawStr(
-    15,
-    35,
-    "Coming later..."
-  );
+// ==================================================
+// SELECTED ALARM: ON/OFF OR EDIT
+// ==================================================
+
+void displayAlarmOptions() {
+
+  u8g2.clearBuffer();
+  u8g2.setFont(u8g2_font_6x12_tr);
+
+  String title = String("ALARM ") + String(selectedAlarmIndex + 1);
+  // Show the action the button will take, not the alarm's current state.
+  String state = alarms[selectedAlarmIndex].enabled ? "OFF" : "ON";
+
+  u8g2.drawStr(43, 11, title.c_str());
+  u8g2.drawStr(18, 31, (String("TURN ") + state).c_str());
+  u8g2.drawStr(18, 51, "EDIT ALARM");
+
+  drawMenuCursor(alarmOptionsIndex, 31, 20);
+  drawSmallCurrentTime();// calling the corner time function 
+  u8g2.sendBuffer();
+}
 
 
+// ==================================================
+// EDIT ALARM: TIME OR SETTINGS
+// ==================================================
+
+void displayEditAlarm() {
+
+  u8g2.clearBuffer();
+  u8g2.setFont(u8g2_font_6x12_tr);
+
+  u8g2.drawStr(31, 11, "EDIT ALARM");
+  u8g2.drawStr(18, 31, "SET ALARM TIME");
+  u8g2.drawStr(18, 51, "ALARM SETTINGS");
+
+  drawMenuCursor(editAlarmIndex, 31, 20);
+  drawSmallCurrentTime();
+  u8g2.sendBuffer();
+}
+
+
+// ==================================================
+// SET ALARM TIME: HOUR, THEN MINUTE
+// ==================================================
+
+void displaySetAlarmTime() {
+
+  u8g2.clearBuffer();
+  u8g2.setFont(u8g2_font_6x12_tr);
+
+  String hour = String(editingAlarmHour);
+  String minute = String(editingAlarmMinute);
+
+  if (editingAlarmHour < 10) {
+
+    hour = "0" + hour;
+  }
+
+  if (editingAlarmMinute < 10) {
+
+    minute = "0" + minute;
+  }
+
+  String editTime = hour + ":" + minute;
+
+  u8g2.drawStr(25, 11, "SET ALARM TIME");
+  u8g2.setFont(u8g2_font_logisoso20_tn);
+
+  int timeX = (128 - u8g2.getStrWidth(editTime.c_str())) / 2;
+  u8g2.drawStr(timeX, 40, editTime.c_str());
+
+  // The arrow shows whether the dial edits the hour or minute.
+  u8g2.setFont(u8g2_font_6x12_tr);
+
+  if (alarmTimeField == 0) {
+
+    u8g2.drawStr(timeX + 8, 56, "^");    //can be slighly shifted to the left (px6)
+    u8g2.drawStr(25, 63, "HOUR: PRESS NEXT");
+  }
+
+  else {
+
+    u8g2.drawStr(timeX + 38, 56, "^");  //may need to seperate the arrow and text to center better
+    u8g2.drawStr(34, 63, "MIN: PRESS SAVE");
+  }
+
+  u8g2.sendBuffer();
+}
+
+
+// ==================================================
+// ALARM SETTINGS: SOUND, SNOOZE, OR LENGTH
+// ==================================================
+
+void displayAlarmSettings() {
+
+  u8g2.clearBuffer();
+  u8g2.setFont(u8g2_font_6x12_tr);
+
+  u8g2.drawStr(22, 11, "ALARM SETTINGS");
+  u8g2.drawStr(12, 27, "ALARM SOUND");
+  u8g2.drawStr(12, 43, "SNOOZE SETTINGS");
+  u8g2.drawStr(12, 59, "ALARM LENGTH");
+
+  drawMenuCursor(alarmSettingsIndex, 27, 16);
+  u8g2.sendBuffer();
+}
+
+
+// ==================================================
+// ALARM SOUND: SOUND 1, 2, OR 3
+// ==================================================
+
+void displayAlarmSound() {
+
+  u8g2.clearBuffer();
+  u8g2.setFont(u8g2_font_6x12_tr);
+
+  u8g2.drawStr(30, 11, "ALARM SOUND");
+  u8g2.drawStr(18, 27, "SOUND 1");
+  u8g2.drawStr(18, 43, "SOUND 2");
+  u8g2.drawStr(18, 59, "SOUND 3");
+
+  drawMenuCursor(alarmSoundIndex, 27, 16);
+  u8g2.drawStr(7, 27 + (alarms[selectedAlarmIndex].sound * 16), "+");
+  drawSmallCurrentTime();
+  u8g2.sendBuffer();
+}
+
+
+// ==================================================
+// SNOOZE SETTINGS: LENGTH OR COUNT
+// ==================================================
+
+void displaySnoozeSettings() {
+
+  u8g2.clearBuffer();
+  u8g2.setFont(u8g2_font_6x12_tr);
+
+  u8g2.drawStr(23, 11, "SNOOZE SETTINGS");
+  u8g2.drawStr(18, 31, "SNOOZE LENGTH");
+  u8g2.drawStr(18, 51, "SNOOZE COUNT");
+
+  drawMenuCursor(snoozeSettingsIndex, 31, 20);
+  u8g2.sendBuffer();
+}
+
+
+// ==================================================
+// SNOOZE LENGTH: 5-15 MINUTES
+// ==================================================
+
+void displaySnoozeLength() {
+
+  u8g2.clearBuffer();
+  u8g2.setFont(u8g2_font_6x12_tr);
+
+  String value = String(snoozeLengthIndex + 5);
+
+  u8g2.drawStr(26, 11, "SNOOZE LENGTH");
+  u8g2.setFont(u8g2_font_logisoso20_tn);
+
+  int valueX = (128 - u8g2.getStrWidth(value.c_str())) / 2;
+  u8g2.drawStr(valueX, 42, value.c_str());
+
+  u8g2.setFont(u8g2_font_6x12_tr);
+  u8g2.drawStr(valueX + 25, 42, "MINUTES");
+  u8g2.drawStr(19, 62, "PRESS TO SAVE");
+  u8g2.sendBuffer();
+}
+
+
+// ==================================================
+// SNOOZE COUNT: 1-10 TIMES
+// ==================================================
+
+void displaySnoozeCount() {
+
+  u8g2.clearBuffer();
+  u8g2.setFont(u8g2_font_6x12_tr);
+
+  String value = String(snoozeCountIndex + 1);
+
+  u8g2.drawStr(29, 11, "SNOOZE COUNT");
+  u8g2.setFont(u8g2_font_logisoso20_tn);
+
+  int valueX = (128 - u8g2.getStrWidth(value.c_str())) / 2;
+  u8g2.drawStr(valueX, 42, value.c_str());
+
+  u8g2.setFont(u8g2_font_6x12_tr);
+  u8g2.drawStr(valueX + 25, 42, "TIMES");
+  u8g2.drawStr(19, 62, "PRESS TO SAVE");
+  u8g2.sendBuffer();
+}
+
+
+// ==================================================
+// ALARM LENGTH: 15, 30, 60, OR INDEFINITE
+// ==================================================
+
+void displayAlarmLength() {
+
+  const char* lengthNames[] = {
+    "15 MINUTES",
+    "30 MINUTES",
+    "60 MINUTES",
+    "INDEFINITE"
+  };
+
+  u8g2.clearBuffer();
+  u8g2.setFont(u8g2_font_6x12_tr);
+  u8g2.drawStr(28, 11, "ALARM LENGTH");
+
+  for (int i = 0; i < 4; i++) {
+
+    u8g2.drawStr(18, 25 + (i * 12), lengthNames[i]);
+  }
+
+  drawMenuCursor(alarmLengthIndex, 25, 12);
+  u8g2.drawStr(7, 25 + (alarms[selectedAlarmIndex].lengthOption * 12), "+");
   u8g2.sendBuffer();
 }
 
