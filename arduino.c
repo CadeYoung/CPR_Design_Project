@@ -1,10 +1,11 @@
 #include <Wire.h>
 #include <U8g2lib.h>
 #include <RTClib.h>
+#include <Preferences.h>
 
-// ==================================================
+// -----------------------------------------------------
 // PIN DEFINITIONS
-// ==================================================
+// -----------------------------------------------------
 
 const int backButton = 4;
 const int homeButton = 5;
@@ -19,126 +20,84 @@ const int encoderSW = 11;
 
 const int buzzerPin = 12;
 
-
-// ==================================================
+// -----------------------------------------------------
 // RTC
-// ==================================================
+// -----------------------------------------------------
 
 RTC_DS3231 rtc;
 DateTime now;
 
-
-// ==================================================
+// -----------------------------------------------------
 // OLED
-// ==================================================
+// -----------------------------------------------------
 
 U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(
   U8G2_R0,
   U8X8_PIN_NONE
 );
 
-
-// ==================================================
+// -----------------------------------------------------
 // SCREEN STATES
-// ==================================================
+// -----------------------------------------------------
 
 enum Screen {
-
   HOME_SCREEN,
-
   SETTINGS_MENU,
-
   SET_ALARMS_MENU,
-
   ALARM_OPTIONS_MENU,
-
   EDIT_ALARM_MENU,
-
   SET_ALARM_TIME_MENU,
-
   ALARM_SETTINGS_MENU,
-
   ALARM_SOUND_MENU,
-
   SNOOZE_SETTINGS_MENU,
-
   SNOOZE_LENGTH_MENU,
-
   SNOOZE_COUNT_MENU,
-
   ALARM_LENGTH_MENU,
-
   SET_TIME_MENU,
-
+  SET_CLOCK_TIME_EDIT_MENU,
+  SET_DATE_MENU,
   SET_STD_MILITARY_MENU,
-
   SET_BRIGHTNESS_MENU
 };
 
 Screen currentScreen = HOME_SCREEN;
 
-
-// ==================================================
+// -----------------------------------------------------
 // MENU VARIABLES
-// ==================================================
+// -----------------------------------------------------
 
 int menuIndex = 0;
+int brightnessMenuIndex = 0;    // Brightness submenu cursor
+int brightnessSetting = 0;      // Active brightness setting
+                                // 0 = Automatic
+                                // 1 = Low
+                                // 2 = Medium
+                                // 3 = High
 
+int automaticBrightness = 0;    // Photoresistor-determined brightness
+                                // 0 = Low
+                                // 1 = Medium
+                                // 2 = High
 
-// Brightness submenu cursor
-int brightnessMenuIndex = 0;
+int timeFormat = 0;             // TIME FORMAT SETTINGS
+                                //   0 = Standard 12-hour time with AM or PM
+                                //   1 = Military 24-hour time
 
+int timeFormatMenuIndex = 0;    // temp selection box on the Time Format page. value does NOT change the active format until the encoder button is clicked.
 
-// Active brightness setting
-// 0 = Automatic
-// 1 = Low
-// 2 = Medium
-// 3 = High
-
-int brightnessSetting = 0;
-
-
-// Photoresistor-determined brightness
-// 0 = Low
-// 1 = Medium
-// 2 = High
-
-int automaticBrightness = 0;
-
-
-// TIME FORMAT SETTINGS
-//
-// The RTC always stores time in 24-hour format. This variable only changes
-// how that same time is shown on the OLED:
-//   0 = Standard 12-hour time with AM or PM
-//   1 = Military 24-hour time
-// Separating the display choice from the RTC prevents a format change from
-// accidentally changing the actual time.
-int timeFormat = 0;
-
-
-// This is the temporary selection box on the Time Format page. Turning the
-// rotary encoder changes this value, but it does NOT change the active format
-// until the encoder button is clicked.
-int timeFormatMenuIndex = 0;
-
-
-// ==================================================
+// -----------------------------------------------------
 // ALARM SETTINGS
-// ==================================================
+// -----------------------------------------------------
 
-// Every alarm keeps its own settings.  The hour is stored in 24-hour time
-// (0-23), even when the Home screen is set to Standard time.
-struct Alarm {
+struct Alarm {                  // Every alarm keeps its own settings. The hour is stored in 24-hour time (0-23), even when the Home screen is set to Standard time.
   bool enabled;
   int hour;
   int minute;
-  int sound;          // 0 = Sound 1, 1 = Sound 2, 2 = Sound 3
-  int snoozeMinutes;  // 5 through 15 minutes
-  int snoozeCount;    // 1 through 10 snoozes
-  int lengthOption;   // 0 = 15m, 1 = 30m, 2 = 60m, 3 = Indefinite
+  int sound;                    // 0 = Sound 1, 1 = Sound 2, 2 = Sound 3
+  int snoozeMinutes;            // 5 - 15 min 
+  int snoozeCount;              // 1 - 10 
+  int lengthOption;             // 0 = 15m, 1 = 30m, 2 = 60m, 3 = Infinite
 };
-
 
 // Three independent alarms, as required by the design report.
 Alarm alarms[3] = {
@@ -146,7 +105,6 @@ Alarm alarms[3] = {
   {false, 8, 0, 0, 5, 3, 1},
   {false, 9, 0, 0, 5, 3, 1}
 };
-
 
 // These variables remember the user's location in the alarm menu tree.
 int alarmListIndex = 0;
@@ -160,132 +118,355 @@ int snoozeLengthIndex = 0;
 int snoozeCountIndex = 0;
 int alarmLengthIndex = 0;
 
-
 // Time is edited in two steps: hour first, then minute.
 int alarmTimeField = 0;
 int editingAlarmHour = 0;
 int editingAlarmMinute = 0;
 
+// -----------------------------------------------------
+// CLOCK TIME AND DATE EDITING
+// -----------------------------------------------------
 
-// ==================================================
+int setTimeDateIndex = 0;       // The Set Time/Date page uses one cursor for its two choices.
+
+
+// Time editing values are copied from the RTC when the edit page opens.
+// They are written back to the RTC only after the final confirmation press.
+int editingClockHour = 0;
+int editingClockMinute = 0;
+int clockTimeField = 0;
+
+// Date editing values follow the same copy-then-confirm pattern.
+int editingClockMonth = 1;
+int editingClockDay = 1;
+int editingClockYear = 2026;
+int clockDateField = 0;
+
+int daysInMonth(int year, int month) {                            // Return the valid number of days for the selected month and year. This keeps the date valid when month or anything is switched
+
+  if (month == 2) {
+    bool leapYear = (year % 4 == 0 && year % 100 != 0) ||
+      (year % 400 == 0);
+    return leapYear ? 29 : 28;
+  }
+  if (month == 4 || month == 6 || month == 9 || month == 11) {    // tracking days in month based on given month
+    return 30;
+  }
+  return 31;
+}
+
+// -----------------------------------------------------
+// PERSISTENT SETTINGS (ESP32 NVS FLASH)
+// -----------------------------------------------------
+
+Preferences preferences;                                          // Preferences is included with the ESP32 Arduino board package. It writes cerain data and keeps its stored if esp gets unplugged
+
+const char* SETTINGS_NAMESPACE = "clockcfg";
+const char* SETTINGS_KEY = "config";
+const uint8_t SETTINGS_VERSION = 2;
+
+struct __attribute__((packed)) StoredAlarm {
+  uint8_t enabled;
+  uint8_t hour;
+  uint8_t minute;
+  uint8_t sound;
+  uint8_t snoozeMinutes;
+  uint8_t snoozeCount;
+  uint8_t lengthOption;
+};
+
+struct __attribute__((packed)) StoredSettingsV1 {
+  uint8_t version;
+  uint8_t timeFormat;
+  uint8_t brightnessSetting;
+  StoredAlarm alarms[3];
+};
+
+struct __attribute__((packed)) StoredSettings {        //The DS3231 stores time data when power is lost 
+
+  uint8_t version;
+  uint8_t timeFormat;
+  uint8_t brightnessSetting;
+  uint16_t clockYear;
+  uint8_t clockMonth;
+  uint8_t clockDay;
+  uint8_t clockHour;
+  uint8_t clockMinute;
+  uint8_t clockSecond;
+  StoredAlarm alarms[3];
+};
+
+void applyStoredUserSettings(
+  uint8_t savedTimeFormat,
+  uint8_t savedBrightnessSetting,
+  const void* savedAlarmData
+) {
+
+  const StoredAlarm* savedAlarms =
+    static_cast<const StoredAlarm*>(savedAlarmData);
+
+  timeFormat = (savedTimeFormat <= 1) ? savedTimeFormat : 0;
+  brightnessSetting = (savedBrightnessSetting <= 3) ?
+    savedBrightnessSetting : 0;
+
+  for (int i = 0; i < 3; i++) {
+
+    alarms[i].enabled = savedAlarms[i].enabled != 0;
+    alarms[i].hour = (savedAlarms[i].hour <= 23) ? savedAlarms[i].hour : alarms[i].hour;
+    alarms[i].minute = (savedAlarms[i].minute <= 59) ? savedAlarms[i].minute : alarms[i].minute;
+    alarms[i].sound = (savedAlarms[i].sound <= 2) ? savedAlarms[i].sound : alarms[i].sound;
+    alarms[i].snoozeMinutes = (savedAlarms[i].snoozeMinutes >= 5 && savedAlarms[i].snoozeMinutes <= 15) ? savedAlarms[i].snoozeMinutes : alarms[i].snoozeMinutes;
+    alarms[i].snoozeCount = (savedAlarms[i].snoozeCount >= 1 && savedAlarms[i].snoozeCount <= 10) ? savedAlarms[i].snoozeCount : alarms[i].snoozeCount;
+    alarms[i].lengthOption = (savedAlarms[i].lengthOption <= 3) ?savedAlarms[i].lengthOption : alarms[i].lengthOption;
+  }
+}
+
+bool validStoredClock(             // stored clock info 
+  uint16_t year,
+  uint8_t month,
+  uint8_t day,
+  uint8_t hour,
+  uint8_t minute,
+  uint8_t second
+) {
+
+  return year >= 2000 &&
+    year <= 2099 &&
+    month >= 1 &&
+    month <= 12 &&
+    day >= 1 &&
+    day <= daysInMonth(year, month) &&
+    hour <= 23 &&
+    minute <= 59 &&
+    second <= 59;
+}
+
+void loadSettings() {                                           // Read the last confirmed settings during startup. If no saved data exists, keep the default values declared above.
+
+  if (!preferences.begin(SETTINGS_NAMESPACE, true)) { Serial.println("Could not open saved settings");
+    return;
+  }
+
+  size_t storedSize = preferences.getBytesLength(SETTINGS_KEY);
+  bool rtcLostPower = rtc.lostPower();
+
+  if (storedSize == sizeof(StoredSettings)) {
+
+    StoredSettings saved;
+
+    if (preferences.getBytes(SETTINGS_KEY, &saved, sizeof(saved)) ==
+          sizeof(saved) &&
+        saved.version == SETTINGS_VERSION) {
+
+      applyStoredUserSettings( saved.timeFormat, saved.brightnessSetting, saved.alarms
+      );
+
+      if (rtcLostPower && validStoredClock(saved.clockYear,saved.clockMonth,saved.clockDay,saved.clockHour,saved.clockMinute, saved.clockSecond)) 
+      {
+
+        rtc.adjust(DateTime(saved.clockYear,saved.clockMonth,saved.clockDay,saved.clockHour,saved.clockMinute,saved.clockSecond
+        ));
+
+        Serial.println("RTC restored from saved clock snapshot");
+      }
+
+      Serial.println("Saved settings loaded");
+    }
+  }
+
+  else if (storedSize == sizeof(StoredSettingsV1)) {
+
+    StoredSettingsV1 saved;
+
+    if (preferences.getBytes(SETTINGS_KEY, &saved, sizeof(saved)) == sizeof(saved) && saved.version == 1) 
+    {
+
+      applyStoredUserSettings( saved.timeFormat, saved.brightnessSetting, saved.alarms);
+      Serial.println("Version 1 saved settings loaded");
+    }
+  }
+
+  preferences.end();
+}
+
+void saveSettings() {                             // Save every user-configurable setting after the user presses the encoder to confirm it.  dont call in loop()
+
+  StoredSettings saved;
+
+  saved.version = SETTINGS_VERSION;
+  saved.timeFormat = timeFormat;
+  saved.brightnessSetting = brightnessSetting;
+
+  DateTime rtcNow = rtc.now();
+  saved.clockYear = rtcNow.year();
+  saved.clockMonth = rtcNow.month();
+  saved.clockDay = rtcNow.day();
+  saved.clockHour = rtcNow.hour();
+  saved.clockMinute = rtcNow.minute();
+  saved.clockSecond = rtcNow.second();
+
+  for (int i = 0; i < 3; i++) {
+
+    saved.alarms[i].enabled = alarms[i].enabled;
+    saved.alarms[i].hour = alarms[i].hour;
+    saved.alarms[i].minute = alarms[i].minute;
+    saved.alarms[i].sound = alarms[i].sound;
+    saved.alarms[i].snoozeMinutes = alarms[i].snoozeMinutes;
+    saved.alarms[i].snoozeCount = alarms[i].snoozeCount;
+    saved.alarms[i].lengthOption = alarms[i].lengthOption;
+  }
+
+  if (!preferences.begin(SETTINGS_NAMESPACE, false)) 
+  { 
+    Serial.println("Could not save settings");
+    return;
+  }
+
+  size_t written = preferences.putBytes(
+    SETTINGS_KEY,
+    &saved,
+    sizeof(saved)
+  );
+
+  preferences.end();
+
+  if (written != sizeof(saved)) { Serial.println("Settings save failed"); }
+}
+
+// -----------------------------------------------------
 // ROTARY ENCODER VARIABLES
-// ==================================================
+// -----------------------------------------------------
 
 int lastA = HIGH;
 
 unsigned long lastEncoderTime = 0;
 
-
-// Encoder push button debounce
-
-int lastEncoderButtonReading = HIGH;
-int encoderButtonState = HIGH;
+int lastEncoderButtonReading = HIGH;        // Encoder push button debounce
+int encoderButtonState = HIGH;  
 
 unsigned long encoderButtonDebounceTime = 0;
 
-
-// ==================================================
+// -----------------------------------------------------
 // BACK BUTTON VARIABLES
-// ==================================================
+// -----------------------------------------------------
 
 int lastBackReading = HIGH;
 int backButtonState = HIGH;
 
 unsigned long backDebounceTime = 0;
 
+// -----------------------------------------------------
+// SNOOZE + ALARM RESET BUTTON VARIABLES
+// -----------------------------------------------------
 
-// ==================================================
+int lastSnoozeReading = HIGH;
+int snoozeButtonState = HIGH;
+unsigned long snoozeDebounceTime = 0;
+
+int lastResetReading = HIGH;
+int resetButtonState = HIGH;
+unsigned long resetDebounceTime = 0;
+
+// -----------------------------------------------------
 // HOME BUTTON VARIABLES
-// ==================================================
+// -----------------------------------------------------
 
 int lastHomeReading = HIGH;
 int homeButtonState = HIGH;
 
 unsigned long homeDebounceTime = 0;
 
-
-// ==================================================
+// -----------------------------------------------------
 // INPUT EVENTS
-// ==================================================
+// -----------------------------------------------------
 
 bool encoderTurned = false;
 bool encoderPressed = false;
 
 bool backPressed = false;
 bool homePressed = false;
+bool snoozePressed = false;
+bool resetPressed = false;
 
+// -----------------------------------------------------
+// ALARM + BUZZER VARIABLES
+// -----------------------------------------------------
 
-// ==================================================
-// BUZZER VARIABLES
-// ==================================================
+enum AlarmRunState {
+  ALARM_IDLE,
+  ALARM_RINGING,
+  ALARM_SNOOZED
+};
 
-bool buzzerActive = false;
-bool buzzerFinished = false;
+AlarmRunState alarmRunState = ALARM_IDLE;
+int activeAlarmIndex = -1;
+int activeSnoozeCount = 0;
 
-unsigned long buzzerStartTime = 0;
+// The minute keys prevent a dismissed alarm from re-triggering repeatedly
+// during its scheduled minute. Each alarm tracks its own daily occurrence.
+uint32_t lastTriggeredMinute[3] = {0, 0, 0};
 
+unsigned long alarmStartedAt = 0;
+unsigned long snoozeEndsAt = 0;
 
-// ==================================================
+bool buzzerToneOn = false;
+uint16_t buzzerFrequency = 0;
+
+// -----------------------------------------------------
 // SETUP
-// ==================================================
+// -----------------------------------------------------
 
 void setup() {
 
   Serial.begin(115200);
 
-
-  // ==================================================
+  // -----------------------------------------------------
   // I2C
-  // ==================================================
+  // -----------------------------------------------------
 
   Wire.begin(13, 14);
 
   rtc.begin();
 
+  // Restore the last confirmed display and alarm settings from ESP32 flash.
+  // The DS3231's coin cell independently retains the real date and time.
+  loadSettings();
+
   u8g2.begin();
 
-
-  // ==================================================
+  // -----------------------------------------------------
   // PUSH BUTTONS
-  // ==================================================
-
+  // -----------------------------------------------------
   pinMode(backButton, INPUT_PULLUP);     // GPIO 4
   pinMode(homeButton, INPUT_PULLUP);     // GPIO 5
   pinMode(snoozeButton, INPUT_PULLUP);   // GPIO 6
   pinMode(resetButton, INPUT_PULLUP);    // GPIO 7
 
-
-  // ==================================================
+  // -----------------------------------------------------
   // PHOTORESISTOR
-  // ==================================================
-
+  // -----------------------------------------------------
   pinMode(photoPin, INPUT);              // GPIO 8
 
   analogReadResolution(12);
 
-
-  // ==================================================
+  // -----------------------------------------------------
   // ROTARY ENCODER
-  // ==================================================
-
+  // -----------------------------------------------------
   pinMode(encoderA, INPUT_PULLUP);        // GPIO 9
   pinMode(encoderB, INPUT_PULLUP);        // GPIO 10
   pinMode(encoderSW, INPUT_PULLUP);       // GPIO 11
 
   lastA = digitalRead(encoderA);
 
-
-  // ==================================================
+  // -----------------------------------------------------
   // BUZZER
-  // ==================================================
-
+  // -----------------------------------------------------
   pinMode(buzzerPin, OUTPUT);             // GPIO 12
 }
 
-
-// ==================================================
+// -----------------------------------------------------
 // MAIN LOOP
-// ==================================================
+// -----------------------------------------------------
 
 void loop() {
 
@@ -297,31 +478,26 @@ void loop() {
 
   readtime();
 
+  updateAlarmController();
+
   handleMenu();
 
   updateDisplay();
-
-  // buzzeroutput();
 }
 
-
-// ==================================================
+// -----------------------------------------------------
 // READ BACK + HOME BUTTONS
-// ==================================================
-
+// -----------------------------------------------------
 void readbuttons() {
 
-  // ==================================================
+  // -----------------------------------------------------
   // BACK BUTTON
-  // ==================================================
+  // -----------------------------------------------------
 
   int backReading = digitalRead(backButton);
 
 
-  if (backReading != lastBackReading) {
-
-    backDebounceTime = millis();
-  }
+  if (backReading != lastBackReading) {backDebounceTime = millis();}
 
 
   if (millis() - backDebounceTime >= 50) {
@@ -340,21 +516,16 @@ void readbuttons() {
     }
   }
 
-
   lastBackReading = backReading;
 
-
-  // ==================================================
+  // -----------------------------------------------------
   // HOME BUTTON
-  // ==================================================
+  // -----------------------------------------------------
 
   int homeReading = digitalRead(homeButton);
 
 
-  if (homeReading != lastHomeReading) {
-
-    homeDebounceTime = millis();
-  }
+  if (homeReading != lastHomeReading) {homeDebounceTime = millis();}
 
 
   if (millis() - homeDebounceTime >= 50) {
@@ -373,20 +544,80 @@ void readbuttons() {
     }
   }
 
-
   lastHomeReading = homeReading;
+
+
+  // -----------------------------------------------------
+  // SNOOZE BUTTON
+  // -----------------------------------------------------
+
+  int snoozeReading = digitalRead(snoozeButton);
+
+
+  if (snoozeReading != lastSnoozeReading) {
+
+    snoozeDebounceTime = millis();
+  }
+
+
+  if (millis() - snoozeDebounceTime >= 50) {
+
+    if (snoozeReading != snoozeButtonState) {
+
+      snoozeButtonState = snoozeReading;
+
+
+      if (snoozeButtonState == LOW) {
+
+        snoozePressed = true;
+      }
+    }
+  }
+
+
+  lastSnoozeReading = snoozeReading;
+
+
+  // -----------------------------------------------------
+  // ALARM RESET / DISMISS BUTTON
+  // -----------------------------------------------------
+
+  int resetReading = digitalRead(resetButton);
+
+
+  if (resetReading != lastResetReading) {
+
+    resetDebounceTime = millis();
+  }
+
+
+  if (millis() - resetDebounceTime >= 50) {
+
+    if (resetReading != resetButtonState) {
+
+      resetButtonState = resetReading;
+
+
+      if (resetButtonState == LOW) {
+
+        resetPressed = true;
+      }
+    }
+  }
+
+
+  lastResetReading = resetReading;
 }
 
-
-// ==================================================
+// -----------------------------------------------------
 // READ ROTARY ENCODER
-// ==================================================
+// -----------------------------------------------------
 
 void readencoder() {
 
-  // ==================================================
+  // -----------------------------------------------------
   // ROTATION
-  // ==================================================
+  // -----------------------------------------------------
 
   int currentA = digitalRead(encoderA);
 
@@ -402,14 +633,11 @@ void readencoder() {
       lastEncoderTime = millis();
     }
   }
-
-
   lastA = currentA;
 
-
-  // ==================================================
+  // -----------------------------------------------------
   // ENCODER PUSH BUTTON
-  // ==================================================
+  // -----------------------------------------------------
 
   int buttonReading = digitalRead(encoderSW);
 
@@ -440,20 +668,15 @@ void readencoder() {
   lastEncoderButtonReading = buttonReading;
 }
 
-
-// ==================================================
+// -----------------------------------------------------
 // READ RTC
-// ==================================================
+// -----------------------------------------------------
 
-void readtime() {
+void readtime() {now = rtc.now();}
 
-  now = rtc.now();
-}
-
-
-// ==================================================
+// -----------------------------------------------------
 // PHOTORESISTOR
-// ==================================================
+// -----------------------------------------------------
 
 void readLightLevel() {
 
@@ -466,143 +689,285 @@ void readLightLevel() {
 
     Serial.println(voltage);
 
-
-  // ==================================================
+  // -----------------------------------------------------
   // DETERMINE AUTOMATIC BRIGHTNESS CATEGORY
-  // ==================================================
+  // -----------------------------------------------------
 
-  if (voltage < 0.95) {
-
-    automaticBrightness = 2;
-  }
-
-
-  else if (voltage < 1.7) {
-
-    automaticBrightness = 1;
-  }
-
-
-  else {
-
-    automaticBrightness = 0;
-  }
-
+  if (voltage < 0.95) {automaticBrightness = 2;}
+  else if (voltage < 1.7) {automaticBrightness = 1;}
+  else {automaticBrightness = 0;}
 
   // Apply brightness setting
-
   updateBrightness();
 }
 
-
-// ==================================================
+// -----------------------------------------------------
 // UPDATE OLED BRIGHTNESS
-// ==================================================
+// -----------------------------------------------------
 
 void updateBrightness() {
 
-  // ==================================================
+  // -----------------------------------------------------
   // AUTOMATIC
-  // ==================================================
+  // -----------------------------------------------------
 
   if (brightnessSetting == 0) {
 
-    if (automaticBrightness == 0) {
+    if (automaticBrightness == 0) {u8g2.setContrast(1);}
+    else if (automaticBrightness == 1) {u8g2.setContrast(130);}
+    else {u8g2.setContrast(255);}
 
-      u8g2.setContrast(1);
+  }
+
+  // -----------------------------------------------------
+  // LOW
+  // -----------------------------------------------------
+
+  else if (brightnessSetting == 1) {u8g2.setContrast(1);}
+
+  // -----------------------------------------------------
+  // MEDIUM
+  // -----------------------------------------------------
+
+  else if (brightnessSetting == 2) {u8g2.setContrast(130);}
+
+  // -----------------------------------------------------
+  // HIGH
+  // -----------------------------------------------------
+
+  else if (brightnessSetting == 3) {u8g2.setContrast(255);}
+}
+
+// -----------------------------------------------------
+// ALARM SOUND ENGINE
+// -----------------------------------------------------
+
+// Only change the hardware output when the requested note changes. This keeps
+// the patterns non-blocking, so buttons, the display, and the RTC keep working
+// while an alarm is sounding.
+void setBuzzerTone(bool shouldPlay, uint16_t frequency = 0) {
+
+  if (!shouldPlay) {
+
+    if (buzzerToneOn) {
+
+      noTone(buzzerPin);
+      buzzerToneOn = false;
+      buzzerFrequency = 0;
+    }
+
+    return;
+  }
+
+
+  if (!buzzerToneOn || buzzerFrequency != frequency) {
+
+    tone(buzzerPin, frequency);
+    buzzerToneOn = true;
+    buzzerFrequency = frequency;
+  }
+}
+
+
+void silenceAlarm() {
+
+  setBuzzerTone(false);
+}
+
+
+// Three distinct selectable sequences. All use the verified-audible 2 kHz
+// piezo frequency; the cadence, rather than a quieter frequency sweep,
+// distinguishes the sound choices on either active or passive buzzers.
+// Sound 1: one long beep; Sound 2: two short beeps; Sound 3: three quick beeps.
+void updateAlarmSound() {
+
+  unsigned long elapsed = millis() - alarmStartedAt;
+  unsigned long phase;
+
+
+  switch (alarms[activeAlarmIndex].sound) {
+
+    case 0:
+      phase = elapsed % 1000;
+      setBuzzerTone(phase < 650, 2000);
+      break;
+
+
+    case 1:
+      phase = elapsed % 1000;
+      setBuzzerTone(
+        phase < 220 || (phase >= 340 && phase < 560),
+        2000
+      );
+      break;
+
+
+    case 2:
+      phase = elapsed % 1000;
+      setBuzzerTone(
+        phase < 120 ||
+          (phase >= 220 && phase < 340) ||
+          (phase >= 440 && phase < 560),
+        2000
+      );
+      break;
+  }
+}
+
+
+unsigned long alarmLengthMilliseconds(int lengthOption) {
+
+  switch (lengthOption) {
+
+    case 0:
+      return 15UL * 60UL * 1000UL;
+
+    case 1:
+      return 30UL * 60UL * 1000UL;
+
+    case 2:
+      return 60UL * 60UL * 1000UL;
+
+    default:
+      return 0;  // Indefinite: it ends only by Reset or Snooze.
+  }
+}
+
+
+void startRingingAlarm(int alarmIndex) {
+
+  activeAlarmIndex = alarmIndex;
+  alarmRunState = ALARM_RINGING;
+  alarmStartedAt = millis();
+  Serial.print("Alarm ringing: ");
+  Serial.println(alarmIndex + 1);
+  Serial.print("Sound sequence: ");
+  Serial.println(alarms[alarmIndex].sound + 1);
+}
+
+void dismissActiveAlarm() {
+
+  silenceAlarm();
+  activeAlarmIndex = -1;
+  activeSnoozeCount = 0;
+  alarmRunState = ALARM_IDLE;
+}
+
+
+bool alarmMatchesCurrentMinute(int alarmIndex) {
+
+  const Alarm& alarm = alarms[alarmIndex];
+
+  return alarm.enabled &&
+    alarm.hour == now.hour() &&
+    alarm.minute == now.minute();
+}
+
+
+void startDueScheduledAlarm() {
+
+  uint32_t currentMinute = now.unixtime() / 60UL;
+
+
+  for (int i = 0; i < 3; i++) {
+
+    if (alarmMatchesCurrentMinute(i) &&
+        lastTriggeredMinute[i] != currentMinute) {
+
+      lastTriggeredMinute[i] = currentMinute;
+      activeSnoozeCount = 0;
+      startRingingAlarm(i);
+      return;
+    }
+  }
+}
+
+
+void updateAlarmController() {
+
+  if (alarmRunState == ALARM_IDLE) {
+
+    startDueScheduledAlarm();
+  }
+
+
+  if (alarmRunState == ALARM_SNOOZED) {
+
+    if (resetPressed) {
+
+      dismissActiveAlarm();
     }
 
 
-    else if (automaticBrightness == 1) {
+    else if ((long)(millis() - snoozeEndsAt) >= 0) {
 
-      u8g2.setContrast(130);
+      startRingingAlarm(activeAlarmIndex);
+    }
+
+    return;
+  }
+
+
+  if (alarmRunState != ALARM_RINGING) {
+
+    return;
+  }
+
+
+  if (resetPressed) {
+
+    dismissActiveAlarm();
+    return;
+  }
+
+
+  if (snoozePressed) {
+
+    if (activeSnoozeCount < alarms[activeAlarmIndex].snoozeCount) {
+
+      activeSnoozeCount++;
+      silenceAlarm();
+      snoozeEndsAt = millis() +
+        (unsigned long)alarms[activeAlarmIndex].snoozeMinutes * 60UL * 1000UL;
+      alarmRunState = ALARM_SNOOZED;
+      Serial.println("Alarm snoozed");
     }
 
 
     else {
 
-      u8g2.setContrast(255);
+      // The configured number of snoozes has been used; Snooze now dismisses.
+      dismissActiveAlarm();
     }
+
+    return;
   }
 
 
-  // ==================================================
-  // LOW
-  // ==================================================
+  unsigned long maximumLength =
+    alarmLengthMilliseconds(alarms[activeAlarmIndex].lengthOption);
 
-  else if (brightnessSetting == 1) {
 
-    u8g2.setContrast(1);
+  if (maximumLength != 0 &&
+      millis() - alarmStartedAt >= maximumLength) {
+
+    dismissActiveAlarm();
+    return;
   }
 
 
-  // ==================================================
-  // MEDIUM
-  // ==================================================
-
-  else if (brightnessSetting == 2) {
-
-    u8g2.setContrast(130);
-  }
-
-
-  // ==================================================
-  // HIGH
-  // ==================================================
-
-  else if (brightnessSetting == 3) {
-
-    u8g2.setContrast(255);
-  }
+  updateAlarmSound();
 }
 
-
-// ==================================================
-// BUZZER
-// ==================================================
-
-void buzzeroutput() {
-
-  // ==================================================
-  // START BUZZER ONCE
-  // ==================================================
-
-  if (buzzerActive == false &&
-      buzzerFinished == false) {
-
-    tone(buzzerPin, 2000);
-
-    buzzerStartTime = millis();
-
-    buzzerActive = true;
-  }
-
-
-  // ==================================================
-  // STOP AFTER 1 SECOND
-  // ==================================================
-
-  if (buzzerActive == true &&
-      millis() - buzzerStartTime >= 1000) {
-
-    noTone(buzzerPin);
-
-    buzzerActive = false;
-
-    buzzerFinished = true;
-  }
-}
-
-
-// ==================================================
+// -----------------------------------------------------
 // HANDLE MENU NAVIGATION
-// ==================================================
+// -----------------------------------------------------
 
 void handleMenu() {
 
-  // ==================================================
+  // -----------------------------------------------------
   // HOME BUTTON OVERRIDES EVERYTHING
-  // ==================================================
+  // -----------------------------------------------------
 
   if (homePressed) {
 
@@ -611,15 +976,13 @@ void handleMenu() {
     menuIndex = 0;
   }
 
-
   else {
 
     switch (currentScreen) {
 
-
-      // ==================================================
+      // -----------------------------------------------------
       // HOME SCREEN
-      // ==================================================
+      // -----------------------------------------------------
 
       case HOME_SCREEN:
 
@@ -633,9 +996,9 @@ void handleMenu() {
         break;
 
 
-      // ==================================================
+      // -----------------------------------------------------
       // SETTINGS MENU
-      // ==================================================
+      // -----------------------------------------------------
 
       case SETTINGS_MENU:
 
@@ -645,12 +1008,7 @@ void handleMenu() {
         if (encoderTurned) {
 
           menuIndex++;
-
-
-          if (menuIndex > 3) {
-
-            menuIndex = 0;
-          }
+          if (menuIndex > 3) { menuIndex = 0;}
         }
 
 
@@ -658,90 +1016,52 @@ void handleMenu() {
 
         if (encoderPressed) {
 
-          if (menuIndex == 0) {
+          if (menuIndex == 0) {currentScreen = SET_ALARMS_MENU;}
 
-            currentScreen = SET_ALARMS_MENU;
-          }
-
-
-          else if (menuIndex == 1) {
-
-            currentScreen = SET_TIME_MENU;
-          }
-
+          else if (menuIndex == 1) {currentScreen = SET_TIME_MENU;}
 
           else if (menuIndex == 2) {
 
-            currentScreen = SET_STD_MILITARY_MENU;
-
-            // When this page opens, put the selection box around the format
-            // currently used on the Home screen.
+            currentScreen = SET_STD_MILITARY_MENU;   // When this page opens, put the selection box around the format currently used on the Home screen.
             timeFormatMenuIndex = timeFormat;
           }
 
-
           else if (menuIndex == 3) {
-
             currentScreen = SET_BRIGHTNESS_MENU;
-
-            // Start cursor on active brightness setting
-
-            brightnessMenuIndex =
-              brightnessSetting;
+            brightnessMenuIndex = brightnessSetting;
           }
         }
 
-
-        // Back returns home
-
-        if (backPressed) {
-
-          currentScreen = HOME_SCREEN;
-        }
+        if (backPressed) {currentScreen = HOME_SCREEN;}          // Back returns home
 
         break;
 
-
-      // ==================================================
+      // -----------------------------------------------------
       // SET ALARMS
-      // ==================================================
+      // -----------------------------------------------------
 
       case SET_ALARMS_MENU:
 
         // Choose one of the three alarms to view or edit.
-        if (encoderTurned) {
-
-          alarmListIndex = (alarmListIndex + 1) % 3;
-        }
-
+        if (encoderTurned) { alarmListIndex = (alarmListIndex + 1) % 3;}
 
         if (encoderPressed) {
-
           selectedAlarmIndex = alarmListIndex;
           alarmOptionsIndex = 0;
           currentScreen = ALARM_OPTIONS_MENU;
         }
 
-
-        if (backPressed) {
-
-          currentScreen = SETTINGS_MENU;
-        }
+        if (backPressed) {currentScreen = SETTINGS_MENU;}
 
         break;
 
-
-      // ==================================================
+      // -----------------------------------------------------
       // SELECTED ALARM: ON/OFF OR EDIT
-      // ==================================================
+      // -----------------------------------------------------
 
       case ALARM_OPTIONS_MENU:
 
-        if (encoderTurned) {
-
-          alarmOptionsIndex = (alarmOptionsIndex + 1) % 2;
-        }
-
+        if (encoderTurned) { alarmOptionsIndex = (alarmOptionsIndex + 1) % 2; }
 
         if (encoderPressed) {
 
@@ -749,36 +1069,27 @@ void handleMenu() {
 
             alarms[selectedAlarmIndex].enabled =
               !alarms[selectedAlarmIndex].enabled;
+
+            saveSettings();
           }
 
-
           else {
-
             editAlarmIndex = 0;
             currentScreen = EDIT_ALARM_MENU;
           }
         }
-
-
-        if (backPressed) {
-
-          currentScreen = SET_ALARMS_MENU;
-        }
+        if (backPressed) {currentScreen = SET_ALARMS_MENU;}
 
         break;
 
 
-      // ==================================================
+      // -----------------------------------------------------
       // EDIT ALARM: TIME OR SETTINGS
-      // ==================================================
+      // -----------------------------------------------------
 
       case EDIT_ALARM_MENU:
 
-        if (encoderTurned) {
-
-          editAlarmIndex = (editAlarmIndex + 1) % 2;
-        }
-
+        if (encoderTurned) {editAlarmIndex = (editAlarmIndex + 1) % 2;}
 
         if (encoderPressed) {
 
@@ -791,7 +1102,6 @@ void handleMenu() {
             currentScreen = SET_ALARM_TIME_MENU;
           }
 
-
           else {
 
             alarmSettingsIndex = 0;
@@ -799,66 +1109,45 @@ void handleMenu() {
           }
         }
 
-
-        if (backPressed) {
-
-          currentScreen = ALARM_OPTIONS_MENU;
-        }
-
+        if (backPressed) { currentScreen = ALARM_OPTIONS_MENU;}
         break;
 
-
-      // ==================================================
+      // -----------------------------------------------------
       // SET ALARM TIME
-      // ==================================================
+      // -----------------------------------------------------
 
       case SET_ALARM_TIME_MENU:
 
         // The dial changes the highlighted part of HH:MM.
         if (encoderTurned) {
 
-          if (alarmTimeField == 0) {
+          if (alarmTimeField == 0) { editingAlarmHour = (editingAlarmHour + 1) % 24;}
 
-            editingAlarmHour = (editingAlarmHour + 1) % 24;
-          }
-
-
-          else {
-
-            editingAlarmMinute = (editingAlarmMinute + 1) % 60;
-          }
+          else { editingAlarmMinute = (editingAlarmMinute + 1) % 60; }
         }
 
 
         // First press moves from hour to minute. Second press saves both.
         if (encoderPressed) {
 
-          if (alarmTimeField == 0) {
-
-            alarmTimeField = 1;
-          }
-
+          if (alarmTimeField == 0) { alarmTimeField = 1; }
 
           else {
 
             alarms[selectedAlarmIndex].hour = editingAlarmHour;
             alarms[selectedAlarmIndex].minute = editingAlarmMinute;
+            saveSettings();
             currentScreen = EDIT_ALARM_MENU;
           }
         }
 
-
-        if (backPressed) {
-
-          currentScreen = EDIT_ALARM_MENU;
-        }
+        if (backPressed) { currentScreen = EDIT_ALARM_MENU;}
 
         break;
 
-
-      // ==================================================
+      // -----------------------------------------------------
       // ALARM SETTINGS: SOUND, SNOOZE, OR LENGTH
-      // ==================================================
+      // -----------------------------------------------------
 
       case ALARM_SETTINGS_MENU:
 
@@ -900,43 +1189,33 @@ void handleMenu() {
         break;
 
 
-      // ==================================================
+      // -----------------------------------------------------
       // ALARM SOUND
-      // ==================================================
+      // -----------------------------------------------------
 
       case ALARM_SOUND_MENU:
 
-        if (encoderTurned) {
-
-          alarmSoundIndex = (alarmSoundIndex + 1) % 3;
-        }
-
+        if (encoderTurned) { alarmSoundIndex = (alarmSoundIndex + 1) % 3; }
 
         if (encoderPressed) {
 
           alarms[selectedAlarmIndex].sound = alarmSoundIndex;
+          saveSettings();
         }
 
 
-        if (backPressed) {
-
-          currentScreen = ALARM_SETTINGS_MENU;
-        }
+        if (backPressed) { currentScreen = ALARM_SETTINGS_MENU;}
 
         break;
 
 
-      // ==================================================
+      // -----------------------------------------------------
       // SNOOZE SETTINGS: LENGTH OR COUNT
-      // ==================================================
+      // -----------------------------------------------------
 
       case SNOOZE_SETTINGS_MENU:
 
-        if (encoderTurned) {
-
-          snoozeSettingsIndex = (snoozeSettingsIndex + 1) % 2;
-        }
-
+        if (encoderTurned) { snoozeSettingsIndex = (snoozeSettingsIndex + 1) % 2; }
 
         if (encoderPressed) {
 
@@ -946,14 +1225,12 @@ void handleMenu() {
             currentScreen = SNOOZE_LENGTH_MENU;
           }
 
-
           else {
 
             snoozeCountIndex = alarms[selectedAlarmIndex].snoozeCount - 1;
             currentScreen = SNOOZE_COUNT_MENU;
           }
         }
-
 
         if (backPressed) {
 
@@ -962,10 +1239,9 @@ void handleMenu() {
 
         break;
 
-
-      // ==================================================
+      // -----------------------------------------------------
       // SNOOZE LENGTH: 5 THROUGH 15 MINUTES
-      // ==================================================
+      // -----------------------------------------------------
 
       case SNOOZE_LENGTH_MENU:
 
@@ -978,6 +1254,7 @@ void handleMenu() {
         if (encoderPressed) {
 
           alarms[selectedAlarmIndex].snoozeMinutes = snoozeLengthIndex + 5;
+          saveSettings();
         }
 
 
@@ -989,9 +1266,9 @@ void handleMenu() {
         break;
 
 
-      // ==================================================
+      // -----------------------------------------------------
       // SNOOZE COUNT: 1 THROUGH 10 TIMES
-      // ==================================================
+      // -----------------------------------------------------
 
       case SNOOZE_COUNT_MENU:
 
@@ -1004,6 +1281,7 @@ void handleMenu() {
         if (encoderPressed) {
 
           alarms[selectedAlarmIndex].snoozeCount = snoozeCountIndex + 1;
+          saveSettings();
         }
 
 
@@ -1015,9 +1293,9 @@ void handleMenu() {
         break;
 
 
-      // ==================================================
+      // -----------------------------------------------------
       // ALARM LENGTH: 15, 30, 60 MINUTES, OR INDEFINITE
-      // ==================================================
+      // -----------------------------------------------------
 
       case ALARM_LENGTH_MENU:
 
@@ -1030,6 +1308,7 @@ void handleMenu() {
         if (encoderPressed) {
 
           alarms[selectedAlarmIndex].lengthOption = alarmLengthIndex;
+          saveSettings();
         }
 
 
@@ -1041,11 +1320,42 @@ void handleMenu() {
         break;
 
 
-      // ==================================================
+      // -----------------------------------------------------
       // SET TIME
-      // ==================================================
+      // -----------------------------------------------------
 
       case SET_TIME_MENU:
+
+        // Select either the Set Time or Set Date page.
+        if (encoderTurned) {
+
+          setTimeDateIndex = (setTimeDateIndex + 1) % 2;
+        }
+
+
+        if (encoderPressed) {
+
+          if (setTimeDateIndex == 0) {
+
+            // Copy the current RTC time into temporary edit values.
+            editingClockHour = now.hour();
+            editingClockMinute = now.minute();
+            clockTimeField = 0;
+            currentScreen = SET_CLOCK_TIME_EDIT_MENU;
+          }
+
+
+          else {
+
+            // Copy the current RTC date into temporary edit values.
+            editingClockMonth = now.month();
+            editingClockDay = now.day();
+            editingClockYear = now.year();
+            clockDateField = 0;
+            currentScreen = SET_DATE_MENU;
+          }
+        }
+
 
         if (backPressed) {
 
@@ -1055,9 +1365,133 @@ void handleMenu() {
         break;
 
 
-      // ==================================================
+      // -----------------------------------------------------
+      // SET CLOCK TIME: HOUR, THEN MINUTE
+      // -----------------------------------------------------
+
+      case SET_CLOCK_TIME_EDIT_MENU:
+
+        if (encoderTurned) {
+
+          if (clockTimeField == 0) {
+
+            editingClockHour = (editingClockHour + 1) % 24;
+          }
+
+
+          else {
+
+            editingClockMinute = (editingClockMinute + 1) % 60;
+          }
+        }
+
+
+        // First press selects minutes. Second press saves the time to the RTC.
+        if (encoderPressed) {
+
+          if (clockTimeField == 0) {
+
+            clockTimeField = 1;
+          }
+
+
+          else {
+
+            rtc.adjust(DateTime(
+              now.year(),
+              now.month(),
+              now.day(),
+              editingClockHour,
+              editingClockMinute,
+              now.second()
+            ));
+
+            // The RTC backup cell keeps time advancing without ESP32 power.
+            // NVS also receives a recovery snapshot through saveSettings().
+            now = rtc.now();
+            saveSettings();
+            currentScreen = SET_TIME_MENU;
+          }
+        }
+
+
+        if (backPressed) {
+
+          // Back discards unfinished edits because the RTC was not changed.
+          currentScreen = SET_TIME_MENU;
+        }
+
+        break;
+
+
+      // -----------------------------------------------------
+      // SET CLOCK DATE: MONTH, DAY, THEN YEAR
+      // -----------------------------------------------------
+
+      case SET_DATE_MENU:
+
+        if (encoderTurned) {
+
+          if (clockDateField == 0) {
+
+            editingClockMonth = (editingClockMonth % 12) + 1;
+
+            // For example, March 31 becomes April 30 when month changes.
+            int maxDay = daysInMonth(editingClockYear, editingClockMonth);
+
+            if (editingClockDay > maxDay) {
+
+              editingClockDay = maxDay;
+            }
+          }
+
+
+          else if (clockDateField == 1) {
+
+            int maxDay = daysInMonth(editingClockYear, editingClockMonth);
+            editingClockDay = (editingClockDay % maxDay) + 1;
+          }
+
+
+          else {
+
+            editingClockYear++;
+
+            if (editingClockYear > 2099) {
+
+              editingClockYear = 2000;
+            }
+
+
+            int maxDay = daysInMonth(editingClockYear, editingClockMonth);
+
+            if (editingClockDay > maxDay) {
+
+              editingClockDay = maxDay;
+            }
+          }
+        }
+
+
+        // Press moves through month, day, and year. The final press saves.
+        if (encoderPressed) {
+
+          if (clockDateField < 2) { clockDateField++; }
+
+          else {
+            rtc.adjust(DateTime( editingClockYear, editingClockMonth, editingClockDay, now.hour(), now.minute(), now.second()));
+            now = rtc.now();
+            saveSettings();
+            currentScreen = SET_TIME_MENU;
+          }
+        }
+
+        if (backPressed) { currentScreen = SET_TIME_MENU;}
+
+        break;
+      // -----------------------------------------------------
       // SET STANDARD / MILITARY
-      // ==================================================
+      // -----------------------------------------------------
 
       case SET_STD_MILITARY_MENU:
 
@@ -1067,81 +1501,52 @@ void handleMenu() {
 
           timeFormatMenuIndex++;
 
-          if (timeFormatMenuIndex > 1) {
-
-            timeFormatMenuIndex = 0;
-          }
+          if (timeFormatMenuIndex > 1) { timeFormatMenuIndex = 0;}
         }
-
 
         // Pressing the encoder confirms the choice. This changes only how the
         // RTC time is displayed; the RTC's stored time remains unchanged.
         if (encoderPressed) {
-
           timeFormat = timeFormatMenuIndex;
+          saveSettings();
         }
-
-        if (backPressed) {
-
-          currentScreen = SETTINGS_MENU;
-        }
+        if (backPressed) {currentScreen = SETTINGS_MENU;}
 
         break;
 
-
-      // ==================================================
+      // -----------------------------------------------------
       // SET BRIGHTNESS
-      // ==================================================
+      // -----------------------------------------------------
 
       case SET_BRIGHTNESS_MENU:
 
-
-        // Move cursor forward
-
         if (encoderTurned) {
-
-          brightnessMenuIndex++;
-
-
-          if (brightnessMenuIndex > 3) {
-
-            brightnessMenuIndex = 0;
-          }
+          brightnessMenuIndex++;                                     // Select current brightness option
+          if (brightnessMenuIndex > 3) {brightnessMenuIndex = 0;}
         }
 
-
-        // Select current brightness option
-
-        if (encoderPressed) {
-
-          brightnessSetting =
-            brightnessMenuIndex;
+        if (encoderPressed) {                                       // Select current brightness option
+          brightnessSetting =brightnessMenuIndex;
+          saveSettings();
         }
 
-
-        // Back returns to settings
-
-        if (backPressed) {
-
-          currentScreen = SETTINGS_MENU;
-        }
+        if (backPressed) {currentScreen = SETTINGS_MENU;}           // Back returns to settings
 
         break;
     }
   }
 
 
-  // ==================================================
+  // -----------------------------------------------------
   // CLEAR INPUT EVENTS
-  // ==================================================
+  // -----------------------------------------------------
 
   encoderTurned = false;
-
   encoderPressed = false;
-
   backPressed = false;
-
   homePressed = false;
+  snoozePressed = false;
+  resetPressed = false;
 }
 
 //Function to call the time on the corner of the screen when working in the settings menus 
@@ -1187,9 +1592,9 @@ void drawSmallCurrentTime(){
 
 
 
-// ==================================================
+// -----------------------------------------------------
 // UPDATE OLED DISPLAY
-// ==================================================
+// -----------------------------------------------------
 
 void updateDisplay() {
 
@@ -1287,6 +1692,20 @@ void updateDisplay() {
       break;
 
 
+    case SET_CLOCK_TIME_EDIT_MENU:
+
+      displaySetClockTime();
+
+      break;
+
+
+    case SET_DATE_MENU:
+
+      displaySetClockDate();
+
+      break;
+
+
     case SET_STD_MILITARY_MENU:
 
       displaySetStdMilitary();
@@ -1303,18 +1722,18 @@ void updateDisplay() {
 }
 
 
-// ==================================================
+// -----------------------------------------------------
 // HOME DISPLAY
-// ==================================================
+// -----------------------------------------------------
 
 void displayHome() {
 
   u8g2.clearBuffer();
 
 
-  // ==================================================
+  // -----------------------------------------------------
   // BUILD TIME STRING HH:MM:SS
-  // ==================================================
+  // -----------------------------------------------------
 
   int displayHour = now.hour();
 
@@ -1365,9 +1784,9 @@ void displayHome() {
     hour + ":" + minute + ":" + second;
 
 
-  // ==================================================
+  // -----------------------------------------------------
   // BUILD DAY STRING
-  // ==================================================
+  // -----------------------------------------------------
 
   const char* days[] = {
 
@@ -1385,9 +1804,9 @@ void displayHome() {
     days[now.dayOfTheWeek()];
 
 
-  // ==================================================
+  // -----------------------------------------------------
   // BUILD DATE STRING
-  // ==================================================
+  // -----------------------------------------------------
 
   String month = String(now.month());
 
@@ -1412,9 +1831,9 @@ void displayHome() {
     month + "/" + day + "/" + year;
 
 
-  // ==================================================
+  // -----------------------------------------------------
   // LARGE CLOCK
-  // ==================================================
+  // -----------------------------------------------------
 
   u8g2.setFont(u8g2_font_logisoso20_tn);
 
@@ -1458,13 +1877,12 @@ void displayHome() {
   }
 
 
-  // ==================================================
-  // FLASHING GEAR
-  // ==================================================
+  // -----------------------------------------------------
+  // FLASHING GEAR     for our settings icon
+  // -----------------------------------------------------
 
   bool showGear =
     ((millis() / 500) % 2 == 0);
-
 
   if (showGear) {
 
@@ -1472,20 +1890,17 @@ void displayHome() {
 
     int gearY = 54;
 
-
     u8g2.drawCircle(
       gearX,
       gearY,
       5
     );
 
-
     u8g2.drawCircle(
       gearX,
       gearY,
       2
     );
-
 
     u8g2.drawLine(
       gearX,
@@ -1494,14 +1909,12 @@ void displayHome() {
       gearY - 5
     );
 
-
     u8g2.drawLine(
       gearX,
       gearY + 5,
       gearX,
       gearY + 7
     );
-
 
     u8g2.drawLine(
       gearX - 7,
@@ -1510,14 +1923,12 @@ void displayHome() {
       gearY
     );
 
-
     u8g2.drawLine(
       gearX + 5,
       gearY,
       gearX + 7,
       gearY
     );
-
 
     u8g2.drawLine(
       gearX - 5,
@@ -1526,7 +1937,6 @@ void displayHome() {
       gearY - 4
     );
 
-
     u8g2.drawLine(
       gearX + 4,
       gearY - 4,
@@ -1534,14 +1944,12 @@ void displayHome() {
       gearY - 5
     );
 
-
     u8g2.drawLine(
       gearX - 5,
       gearY + 5,
       gearX - 4,
       gearY + 4
     );
-
 
     u8g2.drawLine(
       gearX + 4,
@@ -1551,40 +1959,26 @@ void displayHome() {
     );
   }
 
-
-  // ==================================================
+  // -----------------------------------------------------
   // DAY + DATE
-  // ==================================================
+  // -----------------------------------------------------
 
   u8g2.setFont(u8g2_font_6x12_tr);
 
+  String bottomString = dayString + "  " + dateString;
 
-  String bottomString =
-    dayString + "  " + dateString;
+  int bottomWidth = u8g2.getStrWidth(bottomString.c_str());
 
-
-  int bottomWidth =
-    u8g2.getStrWidth(bottomString.c_str());
-
-
-  int bottomX =
-    128 - bottomWidth;
-
-
-  u8g2.drawStr(
-    bottomX,
-    59,
-    bottomString.c_str()
-  );
-
+  int bottomX = 128 - bottomWidth;
+  u8g2.drawStr( bottomX, 59, bottomString.c_str() );
 
   u8g2.sendBuffer();
 }
 
 
-// ==================================================
+// -----------------------------------------------------
 // SETTINGS MENU
-// ==================================================
+// -----------------------------------------------------
 
 void displaySettingsMenu() {
 
@@ -1592,110 +1986,59 @@ void displaySettingsMenu() {
 
   u8g2.setFont(u8g2_font_6x12_tr);
 
+  u8g2.drawStr(37,11,"SETTINGS");
 
-  u8g2.drawStr(
-    37,
-    11,
-    "SETTINGS"
-  );
+  u8g2.drawStr(12,25,"SET ALARMS");
 
+  u8g2.drawStr(12,37,"SET TIME/DATE");
 
-  u8g2.drawStr(
-    12,
-    25,
-    "SET ALARMS"
-  );
+  u8g2.drawStr(12,49,"SET STD/MILITARY");
 
+  u8g2.drawStr( 12,61,"SET BRIGHTNESS");
 
-  u8g2.drawStr(
-    12,
-    37,
-    "SET TIME"
-  );
-
-
-  u8g2.drawStr(
-    12,
-    49,
-    "SET STD/MILITARY"
-  );
-
-
-  u8g2.drawStr(
-    12,
-    61,
-    "SET BRIGHTNESS"
-  );
-
-
-  // ==================================================
+  // -----------------------------------------------------
   // CURSOR
-  // ==================================================
+  // -----------------------------------------------------
 
-  if (menuIndex == 0) {
+  if (menuIndex == 0) {u8g2.drawStr(0, 25, ">");}
 
-    u8g2.drawStr(0, 25, ">");
-  }
+  else if (menuIndex == 1) {u8g2.drawStr(0, 37, ">");}
 
+  else if (menuIndex == 2) {u8g2.drawStr(0, 49, ">");}
 
-  else if (menuIndex == 1) {
-
-    u8g2.drawStr(0, 37, ">");
-  }
-
-
-  else if (menuIndex == 2) {
-
-    u8g2.drawStr(0, 49, ">");
-  }
-
-
-  else if (menuIndex == 3) {
-
-    u8g2.drawStr(0, 61, ">");
-  }
-
+  else if (menuIndex == 3) {u8g2.drawStr(0, 61, ">");}
 
   u8g2.sendBuffer();
 }
 
-
-// ==================================================
+// -----------------------------------------------------
 // ALARM MENU DISPLAY HELPERS
-// ==================================================
+// -----------------------------------------------------
 
 // Convert an alarm's stored 24-hour time into a short string for the menu.
-String alarmTimeString(const Alarm& alarm) {
+String alarmTimeString(int alarmIndex) {
+
+  const Alarm& alarm = alarms[alarmIndex];
 
   String hour = String(alarm.hour);
   String minute = String(alarm.minute);
 
-  if (alarm.hour < 10) {
+  if (alarm.hour < 10) {hour = "0" + hour;}
 
-    hour = "0" + hour;
-  }
-
-
-  if (alarm.minute < 10) {
-
-    minute = "0" + minute;
-  }
-
+  if (alarm.minute < 10) {minute = "0" + minute;}
 
   return hour + ":" + minute;
 }
 
-
-// Draw the familiar > cursor at one row in a vertical list.
+// Draw the > cursor at one row in a vertical list.
 void drawMenuCursor(int index, int firstRowY, int rowSpacing) {
 
   u8g2.drawStr(0, firstRowY + (index * rowSpacing), ">");
 }
 
-
-// ==================================================
+// -----------------------------------------------------
 // ALARM LIST: ALARM 1, 2, OR 3
-// ==================================================
+// -----------------------------------------------------
 
 void displaySetAlarms() {
 
@@ -1707,7 +2050,7 @@ void displaySetAlarms() {
   for (int i = 0; i < 3; i++) {
 
     String alarmLabel = String("ALARM ") + String(i + 1) + "  " +
-      alarmTimeString(alarms[i]) + "  " +
+      alarmTimeString(i) + "  " +
       (alarms[i].enabled ? "ON" : "OFF");
 
     u8g2.drawStr(12, 27 + (i * 16), alarmLabel.c_str());
@@ -1718,9 +2061,9 @@ void displaySetAlarms() {
 }
 
 
-// ==================================================
+// -----------------------------------------------------
 // SELECTED ALARM: ON/OFF OR EDIT
-// ==================================================
+// -----------------------------------------------------
 
 void displayAlarmOptions() {
 
@@ -1741,9 +2084,9 @@ void displayAlarmOptions() {
 }
 
 
-// ==================================================
+// -----------------------------------------------------
 // EDIT ALARM: TIME OR SETTINGS
-// ==================================================
+// -----------------------------------------------------
 
 void displayEditAlarm() {
 
@@ -1760,9 +2103,9 @@ void displayEditAlarm() {
 }
 
 
-// ==================================================
+// -----------------------------------------------------
 // SET ALARM TIME: HOUR, THEN MINUTE
-// ==================================================
+// -----------------------------------------------------
 
 void displaySetAlarmTime() {
 
@@ -1808,10 +2151,9 @@ void displaySetAlarmTime() {
   u8g2.sendBuffer();
 }
 
-
-// ==================================================
+// -----------------------------------------------------
 // ALARM SETTINGS: SOUND, SNOOZE, OR LENGTH
-// ==================================================
+// -----------------------------------------------------
 
 void displayAlarmSettings() {
 
@@ -1828,9 +2170,9 @@ void displayAlarmSettings() {
 }
 
 
-// ==================================================
+// -----------------------------------------------------
 // ALARM SOUND: SOUND 1, 2, OR 3
-// ==================================================
+// -----------------------------------------------------
 
 void displayAlarmSound() {
 
@@ -1849,9 +2191,9 @@ void displayAlarmSound() {
 }
 
 
-// ==================================================
+// -----------------------------------------------------
 // SNOOZE SETTINGS: LENGTH OR COUNT
-// ==================================================
+// -----------------------------------------------------
 
 void displaySnoozeSettings() {
 
@@ -1863,13 +2205,14 @@ void displaySnoozeSettings() {
   u8g2.drawStr(18, 51, "SNOOZE COUNT");
 
   drawMenuCursor(snoozeSettingsIndex, 31, 20);
+  drawSmallCurrentTime();
   u8g2.sendBuffer();
 }
 
 
-// ==================================================
+// -----------------------------------------------------
 // SNOOZE LENGTH: 5-15 MINUTES
-// ==================================================
+// -----------------------------------------------------
 
 void displaySnoozeLength() {
 
@@ -1881,19 +2224,25 @@ void displaySnoozeLength() {
   u8g2.drawStr(26, 11, "SNOOZE LENGTH");
   u8g2.setFont(u8g2_font_logisoso20_tn);
 
-  int valueX = (128 - u8g2.getStrWidth(value.c_str())) / 2;
+  int valueWidth = u8g2.getStrWidth(value.c_str());
+
+  u8g2.setFont(u8g2_font_6x12_tr);
+  const char* unit = "MINUTES";
+  int contentWidth = valueWidth + 4 + u8g2.getStrWidth(unit);
+  int valueX = (128 - contentWidth) / 2;
+
+  u8g2.setFont(u8g2_font_logisoso20_tn);
   u8g2.drawStr(valueX, 42, value.c_str());
 
   u8g2.setFont(u8g2_font_6x12_tr);
-  u8g2.drawStr(valueX + 25, 42, "MINUTES");
+  u8g2.drawStr(valueX + valueWidth + 4, 42, unit);
   u8g2.drawStr(19, 62, "PRESS TO SAVE");
   u8g2.sendBuffer();
 }
 
-
-// ==================================================
+// -----------------------------------------------------
 // SNOOZE COUNT: 1-10 TIMES
-// ==================================================
+// -----------------------------------------------------
 
 void displaySnoozeCount() {
 
@@ -1905,19 +2254,26 @@ void displaySnoozeCount() {
   u8g2.drawStr(29, 11, "SNOOZE COUNT");
   u8g2.setFont(u8g2_font_logisoso20_tn);
 
-  int valueX = (128 - u8g2.getStrWidth(value.c_str())) / 2;
+  int valueWidth = u8g2.getStrWidth(value.c_str());
+
+  u8g2.setFont(u8g2_font_6x12_tr);
+  const char* unit = "TIMES";
+  int contentWidth = valueWidth + 4 + u8g2.getStrWidth(unit);
+  int valueX = (128 - contentWidth) / 2;
+
+  u8g2.setFont(u8g2_font_logisoso20_tn);
   u8g2.drawStr(valueX, 42, value.c_str());
 
   u8g2.setFont(u8g2_font_6x12_tr);
-  u8g2.drawStr(valueX + 25, 42, "TIMES");
+  u8g2.drawStr(valueX + valueWidth + 4, 42, unit);
   u8g2.drawStr(19, 62, "PRESS TO SAVE");
   u8g2.sendBuffer();
 }
 
 
-// ==================================================
+// -----------------------------------------------------
 // ALARM LENGTH: 15, 30, 60, OR INDEFINITE
-// ==================================================
+// -----------------------------------------------------
 
 void displayAlarmLength() {
 
@@ -1943,39 +2299,125 @@ void displayAlarmLength() {
 }
 
 
-// ==================================================
-// SET TIME PLACEHOLDER
-// ==================================================
+// -----------------------------------------------------
+// SET TIME/DATE MENU
+// -----------------------------------------------------
 
 void displaySetTime() {
 
   u8g2.clearBuffer();
+  u8g2.setFont(u8g2_font_6x12_tr);
+
+  u8g2.drawStr(35, 11, "SET TIME/DATE");
+  u8g2.drawStr(18, 31, "SET TIME");
+  u8g2.drawStr(18, 48, "SET DATE");
+
+  drawMenuCursor(setTimeDateIndex, 31, 17);
+  drawSmallCurrentTime();
+  u8g2.sendBuffer();
+}
+
+
+// -----------------------------------------------------
+// SET CLOCK TIME
+// -----------------------------------------------------
+
+void displaySetClockTime() {
+
+  u8g2.clearBuffer();
+  u8g2.setFont(u8g2_font_6x12_tr);
+
+  String hour = String(editingClockHour);
+  String minute = String(editingClockMinute);
+
+  if (editingClockHour < 10) {
+
+    hour = "0" + hour;
+  }
+
+
+  if (editingClockMinute < 10) {
+
+    minute = "0" + minute;
+  }
+
+
+  String editTime = hour + ":" + minute;
+
+  u8g2.drawStr(35, 11, "SET TIME");
+  u8g2.setFont(u8g2_font_logisoso20_tn);
+
+  int timeX = (128 - u8g2.getStrWidth(editTime.c_str())) / 2;
+  u8g2.drawStr(timeX, 40, editTime.c_str());
 
   u8g2.setFont(u8g2_font_6x12_tr);
 
+  if (clockTimeField == 0) {
 
-  u8g2.drawStr(
-    40,
-    15,
-    "SET TIME"
-  );
+    u8g2.drawStr(timeX + 8, 56, "^");
+    u8g2.drawStr(25, 63, "HOUR: PRESS NEXT");
+  }
 
 
-  u8g2.drawStr(
-    15,
-    35,
-    "Coming later..."
-  );
+  else {
 
+    u8g2.drawStr(timeX + 38, 56, "^");
+    u8g2.drawStr(34, 63, "MIN: PRESS SAVE");
+  }
 
   u8g2.sendBuffer();
 }
 
 
-// ==================================================
-// STANDARD / MILITARY MENU
-// ==================================================
+// -----------------------------------------------------
+// SET CLOCK DATE
+// -----------------------------------------------------
 
+void displaySetClockDate() {
+
+  u8g2.clearBuffer();
+  u8g2.setFont(u8g2_font_6x12_tr);
+
+  String month = String(editingClockMonth);
+  String day = String(editingClockDay);
+  String year = String(editingClockYear);
+
+  if (editingClockMonth < 10) { month = "0" + month; }
+  if (editingClockDay < 10) { day = "0" + day; }
+
+  String editDate = month + "/" + day + "/" + year;
+
+  u8g2.drawStr(35, 11, "SET DATE");
+
+  // MM/DD/YYYY is ten characters wide. The large numeric font can exceed the
+  // OLED width, so use the reliable fixed-width font for this edit screen.
+  u8g2.setFont(u8g2_font_6x12_tr);
+
+  int dateX = (128 - u8g2.getStrWidth(editDate.c_str())) / 2;
+  u8g2.drawStr(dateX, 34, editDate.c_str());
+
+  if (clockDateField == 0) {
+    u8g2.drawStr(dateX + 3, 47, "^");
+    u8g2.drawStr(24, 63, "MONTH: PRESS NEXT");
+  }
+
+  else if (clockDateField == 1) {
+    u8g2.drawStr(dateX + 21, 47, "^");
+    u8g2.drawStr(27, 63, "DAY: PRESS NEXT");
+  }
+
+  else {
+    u8g2.drawStr(dateX + 45, 47, "^");
+    u8g2.drawStr(31, 63, "YEAR: PRESS SAVE");
+  }
+
+
+  u8g2.sendBuffer();
+}
+
+// -----------------------------------------------------
+// STANDARD / MILITARY MENU
+// -----------------------------------------------------
 
 void displaySetStdMilitary() {  //Screen function to select between standard and military time 
                                 //The time will only update when the encoder is pressed again 
@@ -2057,10 +2499,9 @@ void displaySetStdMilitary() {  //Screen function to select between standard and
   u8g2.sendBuffer();
 }
 
-
-// ==================================================
+// -----------------------------------------------------
 // BRIGHTNESS MENU
-// ==================================================
+// -----------------------------------------------------
 
 void displaySetBrightness() {
 
@@ -2068,137 +2509,44 @@ void displaySetBrightness() {
 
   u8g2.setFont(u8g2_font_6x12_tr);
 
-
-  // ==================================================
+  // -----------------------------------------------------
   // TITLE
-  // ==================================================
+  // -----------------------------------------------------
 
-  u8g2.drawStr(
-    20,
-    11,
-    "OLED BRIGHTNESS"
-  );
+  u8g2.drawStr(20,11,"OLED BRIGHTNESS");
 
-
-  // ==================================================
+  // -----------------------------------------------------
   // OPTIONS
-  // ==================================================
+  // -----------------------------------------------------
 
-  u8g2.drawStr(
-    30,
-    25,
-    "AUTOMATIC"
-  );
+  u8g2.drawStr(30,25,"AUTOMATIC");
+  u8g2.drawStr(30,37,"LOW");
+  u8g2.drawStr(30,49,"MEDIUM");
+  u8g2.drawStr(30,61,"HIGH");
 
-
-  u8g2.drawStr(
-    30,
-    37,
-    "LOW"
-  );
-
-
-  u8g2.drawStr(
-    30,
-    49,
-    "MEDIUM"
-  );
-
-
-  u8g2.drawStr(
-    30,
-    61,
-    "HIGH"
-  );
-
-
-  // ==================================================
+  // -----------------------------------------------------
   // CURSOR >
-  // ==================================================
+  // -----------------------------------------------------
 
-  if (brightnessMenuIndex == 0) {
+  if (brightnessMenuIndex == 0) {u8g2.drawStr(0,25,">");}
 
-    u8g2.drawStr(
-      0,
-      25,
-      ">"
-    );
-  }
+  else if (brightnessMenuIndex == 1) {u8g2.drawStr(0,37,">");}
 
+  else if (brightnessMenuIndex == 2) {u8g2.drawStr(0,49,">");}
 
-  else if (brightnessMenuIndex == 1) {
+  else if (brightnessMenuIndex == 3) {u8g2.drawStr(0,61,">");}
 
-    u8g2.drawStr(
-      0,
-      37,
-      ">"
-    );
-  }
-
-
-  else if (brightnessMenuIndex == 2) {
-
-    u8g2.drawStr(
-      0,
-      49,
-      ">"
-    );
-  }
-
-
-  else if (brightnessMenuIndex == 3) {
-
-    u8g2.drawStr(
-      0,
-      61,
-      ">"
-    );
-  }
-
-
-  // ==================================================
+  // -----------------------------------------------------
   // ACTIVE SETTING +
-  // ==================================================
+  // -----------------------------------------------------
 
-  if (brightnessSetting == 0) {
+  if (brightnessSetting == 0) {u8g2.drawStr(18,25,"+");}
 
-    u8g2.drawStr(
-      18,
-      25,
-      "+"
-    );
-  }
+  else if (brightnessSetting == 1) {u8g2.drawStr(18,37,"+");}
 
+  else if (brightnessSetting == 2) {u8g2.drawStr(18,49,"+");}
 
-  else if (brightnessSetting == 1) {
-
-    u8g2.drawStr(
-      18,
-      37,
-      "+"
-    );
-  }
-
-
-  else if (brightnessSetting == 2) {
-
-    u8g2.drawStr(
-      18,
-      49,
-      "+"
-    );
-  }
-
-
-  else if (brightnessSetting == 3) {
-
-    u8g2.drawStr(
-      18,
-      61,
-      "+"
-    );
-  }
-
+  else if (brightnessSetting == 3) {u8g2.drawStr(18,61,"+");}
 
   u8g2.sendBuffer();
 }
