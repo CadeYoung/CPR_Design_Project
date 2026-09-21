@@ -574,9 +574,7 @@ void readbuttons() {
     }
   }
 
-
   lastSnoozeReading = snoozeReading;
-
 
   // -----------------------------------------------------
   // ALARM RESET / DISMISS BUTTON
@@ -604,7 +602,6 @@ void readbuttons() {
       }
     }
   }
-
 
   lastResetReading = resetReading;
 }
@@ -742,9 +739,7 @@ void updateBrightness() {
 // ALARM SOUND ENGINE
 // -----------------------------------------------------
 
-// Only change the hardware output when the requested note changes. This keeps
-// the patterns non-blocking, so buttons, the display, and the RTC keep working
-// while an alarm is sounding.
+// Only change the hardware output when the requested note changes.
 void setBuzzerTone(bool shouldPlay, uint16_t frequency = 0) {
 
   if (!shouldPlay) {
@@ -759,7 +754,6 @@ void setBuzzerTone(bool shouldPlay, uint16_t frequency = 0) {
     return;
   }
 
-
   if (!buzzerToneOn || buzzerFrequency != frequency) {
 
     tone(buzzerPin, frequency);
@@ -768,16 +762,11 @@ void setBuzzerTone(bool shouldPlay, uint16_t frequency = 0) {
   }
 }
 
-
 void silenceAlarm() {
 
   setBuzzerTone(false);
 }
 
-
-// Three distinct selectable sequences. All use the verified-audible 2 kHz
-// piezo frequency; the cadence, rather than a quieter frequency sweep,
-// distinguishes the sound choices on either active or passive buzzers.
 // Sound 1: one long beep; Sound 2: two short beeps; Sound 3: three quick beeps.
 void updateAlarmSound() {
 
@@ -795,25 +784,16 @@ void updateAlarmSound() {
 
     case 1:
       phase = elapsed % 1000;
-      setBuzzerTone(
-        phase < 220 || (phase >= 340 && phase < 560),
-        2000
-      );
+      setBuzzerTone(phase < 220 || (phase >= 340 && phase < 560), 2000);
       break;
 
 
     case 2:
       phase = elapsed % 1000;
-      setBuzzerTone(
-        phase < 120 ||
-          (phase >= 220 && phase < 340) ||
-          (phase >= 440 && phase < 560),
-        2000
-      );
+      setBuzzerTone(phase < 120 || (phase >= 220 && phase < 340) ||(phase >= 440 && phase < 560), 2000 );
       break;
   }
 }
-
 
 unsigned long alarmLengthMilliseconds(int lengthOption) {
 
@@ -935,14 +915,11 @@ void updateAlarmController() {
 
 
     else {
-
-      // The configured number of snoozes has been used; Snooze now dismisses.
       dismissActiveAlarm();
     }
 
     return;
   }
-
 
   unsigned long maximumLength =
     alarmLengthMilliseconds(alarms[activeAlarmIndex].lengthOption);
@@ -954,7 +931,6 @@ void updateAlarmController() {
     dismissActiveAlarm();
     return;
   }
-
 
   updateAlarmSound();
 }
@@ -1495,8 +1471,7 @@ void handleMenu() {
 
       case SET_STD_MILITARY_MENU:
 
-        // Rotating the encoder moves the selection box between the two
-        // choices. It does not apply a new time format yet.
+        // Rotating the encoder moves the selection box between the two choices. It does not apply a new time format yet.
         if (encoderTurned) {
 
           timeFormatMenuIndex++;
@@ -1504,8 +1479,7 @@ void handleMenu() {
           if (timeFormatMenuIndex > 1) { timeFormatMenuIndex = 0;}
         }
 
-        // Pressing the encoder confirms the choice. This changes only how the
-        // RTC time is displayed; the RTC's stored time remains unchanged.
+        // Pressing the encoder confirms the choice. This changes only how the RTC time is displayed; the RTC's stored time remains unchanged.
         if (encoderPressed) {
           timeFormat = timeFormatMenuIndex;
           saveSettings();
@@ -1535,7 +1509,6 @@ void handleMenu() {
         break;
     }
   }
-
 
   // -----------------------------------------------------
   // CLEAR INPUT EVENTS
@@ -1740,8 +1713,7 @@ void displayHome() {
   const char* meridiem = "";
 
 
-  // The RTC always remains in 24-hour time.  Convert only for the standard
-  // display, so noon and midnight are shown as 12 PM and 12 AM respectively.
+  // The RTC always remains in 24-hour time.  Convert only for the standard display, so noon and midnight are shown as 12 PM and 12 AM respectively.
   if (timeFormat == 0) {
 
     meridiem = (now.hour() < 12) ? "AM" : "PM";
@@ -2298,7 +2270,6 @@ void displayAlarmLength() {
   u8g2.sendBuffer();
 }
 
-
 // -----------------------------------------------------
 // SET TIME/DATE MENU
 // -----------------------------------------------------
@@ -2316,7 +2287,6 @@ void displaySetTime() {
   drawSmallCurrentTime();
   u8g2.sendBuffer();
 }
-
 
 // -----------------------------------------------------
 // SET CLOCK TIME
@@ -2389,8 +2359,7 @@ void displaySetClockDate() {
 
   u8g2.drawStr(35, 11, "SET DATE");
 
-  // MM/DD/YYYY is ten characters wide. The large numeric font can exceed the
-  // OLED width, so use the reliable fixed-width font for this edit screen.
+  // MM/DD/YYYY is ten characters wide. use fixed-width font for this edit screen.
   u8g2.setFont(u8g2_font_6x12_tr);
 
   int dateX = (128 - u8g2.getStrWidth(editDate.c_str())) / 2;
@@ -2427,8 +2396,7 @@ void displaySetStdMilitary() {  //Screen function to select between standard and
   int previewHour = now.hour();
   const char* previewMeridiem = "";
 
-  // For Standard time, convert the RTC's 0-23 hour into a 1-12 hour and add
-  // AM or PM. For Military time, previewHour remains the original 0-23 hour.
+  // For Standard time, convert the RTC's 0-23 hour into a 1-12 hour and add AM or PM. For Military time, previewHour remains the original 0-23 hour.
   if (timeFormat == 0) {
 
     previewMeridiem = (now.hour() < 12) ? "AM" : "PM";
@@ -2453,8 +2421,7 @@ void displaySetStdMilitary() {  //Screen function to select between standard and
   String previewTime =
     previewHourString + ":" + previewMinute + ":" + previewSecond;
 
-  // Center the time preview at the top of the page. AM/PM needs additional
-  // width, so include it in the centering calculation when needed.
+  // Center the time preview at the top of the page. AM/PM needs additional width, so include it in the centering calculation when needed.
   u8g2.setFont(u8g2_font_logisoso20_tn);
 
   int previewTimeWidth = u8g2.getStrWidth(previewTime.c_str());
